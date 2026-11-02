@@ -1,0 +1,33 @@
+#!/bin/sh
+# meum-hook: forwards a Claude Code hook (JSON on stdin) to the meum control socket as an agent.hook request.
+#
+#   {"id":1,"method":"agent.hook","oneshot":true,
+#    "params":{"tab":$MEUM_TAB,"configDir":$CLAUDE_CONFIG_DIR,"payload":<stdin>}}
+#
+# Contract: silent (stdout would be injected into Claude's context for some events), always exit 0,
+# and never block Claude: no tab, no socket or a dead socket cost a few ms; a stuck server is cut off
+# after one second by nc -w 1. The server closes the connection after answering ("oneshot").
+
+[ -n "$MEUM_TAB" ] || exit 0                       # not inside a meum tab
+SOCK="${MEUM_SOCKET:-$HOME/.local/state/meum/meum.sock}"
+[ -S "$SOCK" ] || exit 0                          # app not running
+case "$MEUM_TAB" in *[!A-Za-z0-9_.-]*) exit 0 ;; esac   # must be a safe token (a UUID)
+[ -t 0 ] && exit 0                                # run by hand: nothing to forward
+
+NC=/usr/bin/nc
+[ -x "$NC" ] || NC=nc
+
+# Hook JSON never contains raw newlines inside strings (they are escaped), so flattening is safe
+# and keeps the request on one line.
+IN=$(cat | tr '\n\r' '  ')
+[ -n "$IN" ] || IN=null
+
+CFG=${CLAUDE_CONFIG_DIR:-}
+case "$CFG" in
+  '' | *\"* | *\\*) CFGJ=null ;;                  # unset = default ~/.claude; odd chars: let the app derive it
+  *) CFGJ="\"$CFG\"" ;;
+esac
+
+printf '{"id":1,"method":"agent.hook","oneshot":true,"params":{"tab":"%s","configDir":%s,"payload":%s}}\n' \
+  "$MEUM_TAB" "$CFGJ" "$IN" | "$NC" -U -w 1 "$SOCK" >/dev/null 2>&1
+exit 0

@@ -1,0 +1,7 @@
+{
+  "name": "meum",
+  "owner": { "name": "Max Studanski" },
+  "plugins": [
+    { "name": "meum", "source": "./plugin", "description": "Gives Claude Code sessions running in meum tabs meum's MCP tools (widgets, the browser, status, notifications)." }
+  ]
+}

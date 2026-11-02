@@ -1,0 +1,17 @@
+.zig-cache/
+zig-out/
+build/
+.build/
+vendor/
+*.app/
+.build/
+.swiftpm/
+.claude/worktrees/
+
+# local-only: Claude Code session files and recorded spike runs (real hook events)
+.claude/
+spikes/*/run/
+spikes/*/shots/
+spikes/*/logs/
+spikes/*/out/
+spikes/**/*.png

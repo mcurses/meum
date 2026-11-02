@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "meum": {
+      "type": "stdio",
+      "command": "${MEUM_CLI:-/Applications/meum.app/Contents/Resources/bin/meum}",
+      "args": ["mcp"]
+    }
+  }
+}

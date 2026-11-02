@@ -1,0 +1,9 @@
+#!/bin/sh
+# meum-hook: forward Claude Code hook payload (stdin) to meum's unix socket. Never blocks, never fails.
+SOCK="${MEUM_SOCK:-$HOME/.local/state/meum/meum.sock}"
+[ -n "$MEUM_TAB" ] || exit 0          # not inside a meum tab
+[ -S "$SOCK" ] || exit 0             # app not running
+IN=$(cat)
+printf '{"tab":"%s","config_dir":"%s","payload":%s}\n' "$MEUM_TAB" "${CLAUDE_CONFIG_DIR:-}" "${IN:-null}" \
+  | /usr/bin/nc -U -w 1 "$SOCK" >/dev/null 2>&1
+exit 0

@@ -1,0 +1,76 @@
+#!/bin/sh
+# Drives a test instance started by scripts/run-test-app.sh (same MEUMT).
+#   meumt cmd LINE...        send debug commands (one per argument) and wait until all are acknowledged
+#   meumt shot FILE          screenshot the container window (screencapture -l)
+#   meumt text TAB|focused [all]   print the surface text
+#   meumt model              print the model dump
+#   meumt zmx ARGS...        run the bundled zmx in the test namespace (e.g. `meumt zmx list`)
+#   meumt quit               quit the app and wait for it to exit
+set -eu
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+MEUMT="${MEUMT:-$ROOT/build/test}"
+DBG="$MEUMT/dbg"
+ZD="${TMPDIR:-/tmp}"
+ZD="${ZD%/}/meumtest-zmx"
+
+count() { [ -f "$DBG/events.log" ] && grep -c '^\(ok\|err\) ' "$DBG/events.log" || true; }
+
+send() {
+  before=$(count)
+  n=$#
+  : > "$DBG/cmd.tmp"
+  for l in "$@"; do printf '%s\n' "$l" >> "$DBG/cmd.tmp"; done
+  mv "$DBG/cmd.tmp" "$DBG/cmd"
+  i=0
+  while [ "$(count)" -lt $((before + n)) ]; do
+    i=$((i + 1)); [ $i -gt 100 ] && { echo "meumt: timeout waiting for ack" >&2; exit 1; }
+    sleep 0.1
+  done
+  tail -n "$n" "$DBG/events.log"
+  ! tail -n "$n" "$DBG/events.log" | grep -q '^err '
+}
+
+case "${1:-}" in
+  cmd) shift; send "$@" ;;
+  shot) screencapture -x -o -l "$(cat "$DBG/window.id")" "$2" ;;
+  text) send "dump-text $2 $MEUMT/text.out ${3:-}" >/dev/null && cat "$MEUMT/text.out" ;;
+  model) send "dump-model $MEUMT/model.json" >/dev/null && cat "$MEUMT/model.json" ;;
+  hist)   # last non-empty lines of every test session
+    Z="$ROOT/build/meum.app/Contents/Resources/bin/zmx"
+    for s in $(ZMX_DIR="$ZD" "$Z" list --short); do
+      echo "== $s"; ZMX_DIR="$ZD" "$Z" history "$s" | grep -v '^[[:space:]]*$' | tail -n "${2:-4}"
+    done ;;
+  anim)   # meumt anim LINE FILE: run LINE, screenshot as soon as it is acknowledged (mid-animation)
+    before=$(count); printf '%s\n' "$2" > "$DBG/cmd"
+    while [ "$(count)" -le "$before" ]; do sleep 0.01; done
+    sleep 0.05; screencapture -x -o -l "$(cat "$DBG/window.id")" "$3" ;;
+  keys) shift; osascript "$ROOT/scripts/keys.applescript" "$(cat "$DBG/pid")" "$@" ;;
+  summary)
+    send "dump-model $MEUMT/model.json" >/dev/null
+    python3 - "$MEUMT/model.json" <<'EOF'
+import json, sys
+d = json.load(open(sys.argv[1])); s = d['state']
+def cards(n):
+    if n is None: return []
+    if 'card' in n: return [n['card']]
+    return cards(n['split']['first']) + cards(n['split']['second'])
+for i, w in enumerate(s['workspaces']):
+    cs = cards(w.get('root'))
+    print(i, w['name'], 'SEL' if w['id'] == s.get('selectedWorkspaceID') else '-', 'cards=%d' % len(cs),
+          'tabs=%s' % [len(c['tabs']) for c in cs],
+          'focus=%s' % [j for j, c in enumerate(cs) if c['id'] == w.get('focusedCardID')])
+print('cardFrames', sorted(tuple(v) for v in d['cardFrames'].values()))
+print('surfaces', len(d['surfaces']), 'key' if d['keyWindow'] else 'notkey')
+EOF
+    ;;
+  surfaces)
+    send "dump-model $MEUMT/model.json" >/dev/null
+    python3 -c "import json;d=json.load(open('$MEUMT/model.json'));[print(s['tab'][:8],'realized' if s['realized'] else '-','visible' if s['visible'] else 'hidden',s['columns'],'x',s['rows'],'FR' if s['firstResponder'] else '') for s in d['surfaces']]" ;;
+  zmx) shift; ZMX_DIR="$ZD" "$ROOT/build/meum.app/Contents/Resources/bin/zmx" "$@" ;;
+  quit)
+    pid=$(cat "$DBG/pid")
+    printf 'quit\n' > "$DBG/cmd"
+    i=0; while kill -0 "$pid" 2>/dev/null; do i=$((i + 1)); [ $i -gt 50 ] && break; sleep 0.1; done
+    ;;
+  *) sed -n '2,9p' "$0"; exit 2 ;;
+esac

@@ -1,0 +1,267 @@
+{
+ "selected_workspace_id": "94D5977B-C260-46EE-B56F-BB50754F7F42",
+ "sequence": 415648,
+ "workspaces": [
+  {
+   "id": "21A5CC24-E173-4F2F-8F39-F38C43DDFDF0",
+   "title": "notes",
+   "pinned": false,
+   "unread_count": 0,
+   "git_branches": [],
+   "branch_summary": null,
+   "selected": false
+  },
+  {
+   "id": "5F045F90-2697-4063-8796-151BF4EC2B27",
+   "title": "garden",
+   "pinned": false,
+   "unread_count": 2,
+   "git_branches": [],
+   "branch_summary": null,
+   "selected": false
+  },
+  {
+   "id": "3973B9DD-BCB4-43CA-94A2-1E2105A936B8",
+   "title": "Tamago",
+   "pinned": false,
+   "unread_count": 0,
+   "git_branches": [],
+   "branch_summary": null,
+   "selected": false
+  },
+  {
+   "id": "94D5977B-C260-46EE-B56F-BB50754F7F42",
+   "title": "meum",
+   "pinned": false,
+   "unread_count": 0,
+   "git_branches": [],
+   "branch_summary": null,
+   "selected": true
+  },
+  {
+   "id": "534F8E24-9087-4610-9CD3-3E29620893F7",
+   "title": "website",
+   "pinned": false,
+   "unread_count": 0,
+   "git_branches": [],
+   "branch_summary": null,
+   "selected": false
+  },
+  {
+   "id": "A5699279-1C14-4292-A4D2-591C45F04C7B",
+   "title": "api",
+   "pinned": false,
+   "unread_count": 0,
+   "git_branches": [],
+   "branch_summary": null,
+   "selected": false
+  },
+  {
+   "id": "459BE1DB-19CB-459A-B752-0D1BF6F5B656",
+   "title": "docs",
+   "pinned": false,
+   "unread_count": 0,
+   "git_branches": [],
+   "branch_summary": null,
+   "selected": false
+  },
+  {
+   "id": "BF80731E-46C2-401C-A247-868C5126A8BD",
+   "title": "recipes",
+   "pinned": false,
+   "unread_count": 0,
+   "git_branches": [],
+   "branch_summary": null,
+   "selected": false
+  },
+  {
+   "id": "1FC070F8-5E18-4052-8B9B-18FACB84C798",
+   "title": "photos",
+   "pinned": false,
+   "unread_count": 0,
+   "git_branches": [],
+   "branch_summary": null,
+   "selected": false
+  },
+  {
+   "id": "00104ED5-18CD-4490-B784-77FEE9AE2444",
+   "title": "budget",
+   "pinned": false,
+   "unread_count": 0,
+   "git_branches": [],
+   "branch_summary": null,
+   "selected": false
+  },
+  {
+   "id": "5B516466-013B-4B18-8097-A406CC3B87A8",
+   "title": "blog",
+   "pinned": false,
+   "unread_count": 0,
+   "git_branches": [],
+   "branch_summary": null,
+   "selected": false
+  },
+  {
+   "id": "7220137D-3303-483F-BA43-441876755C68",
+   "title": "cli-tools",
+   "pinned": false,
+   "unread_count": 0,
+   "git_branches": [],
+   "branch_summary": null,
+   "selected": false
+  },
+  {
+   "id": "9945B61F-FBE0-4EF8-BE8B-334223931BA4",
+   "title": "dotfiles",
+   "pinned": false,
+   "unread_count": 0,
+   "git_branches": [],
+   "branch_summary": null,
+   "selected": false
+  },
+  {
+   "id": "2FF1E5BA-5530-403F-BE28-0E6EDC5F0F33",
+   "title": "weather",
+   "pinned": false,
+   "unread_count": 0,
+   "git_branches": [],
+   "branch_summary": null,
+   "selected": false
+  },
+  {
+   "id": "17014BEE-9077-4A2E-A4B7-A6FC38684605",
+   "title": "chess",
+   "pinned": false,
+   "unread_count": 0,
+   "git_branches": [],
+   "branch_summary": null,
+   "selected": false
+  },
+  {
+   "id": "DA13B91B-1436-49E1-BD68-30FED379DFDC",
+   "title": "music",
+   "pinned": false,
+   "unread_count": 0,
+   "git_branches": [],
+   "branch_summary": null,
+   "selected": false
+  },
+  {
+   "id": "8C3C488B-6209-4FD3-A6C6-1F97C7C368CD",
+   "title": "timer",
+   "pinned": false,
+   "unread_count": 0,
+   "git_branches": [],
+   "branch_summary": null,
+   "selected": false
+  },
+  {
+   "id": "57973063-596C-440D-93A5-AB0E98D627E6",
+   "title": "maps",
+   "pinned": false,
+   "unread_count": 0,
+   "git_branches": [],
+   "branch_summary": null,
+   "selected": false
+  },
+  {
+   "id": "4451811C-91F1-497B-B528-47D2A05325EF",
+   "title": "inbox",
+   "pinned": false,
+   "unread_count": 0,
+   "git_branches": [],
+   "branch_summary": null,
+   "selected": false
+  },
+  {
+   "id": "691F2666-4BB7-4006-9220-6A2E18AA5445",
+   "title": "sketches",
+   "pinned": false,
+   "unread_count": 0,
+   "git_branches": [],
+   "branch_summary": null,
+   "selected": false
+  },
+  {
+   "id": "280AD166-2821-44C8-ADBC-EA9B7E8F2DEB",
+   "title": "reader",
+   "pinned": false,
+   "unread_count": 0,
+   "git_branches": [],
+   "branch_summary": null,
+   "selected": false
+  },
+  {
+   "id": "E4F52BAD-A7A0-4468-9D9D-70CF4C6376A2",
+   "title": "tasks",
+   "pinned": false,
+   "unread_count": 0,
+   "git_branches": [],
+   "branch_summary": null,
+   "selected": false
+  },
+  {
+   "id": "156B1573-BB87-444F-AADF-10194231911B",
+   "title": "journal",
+   "pinned": false,
+   "unread_count": 0,
+   "git_branches": [],
+   "branch_summary": null,
+   "selected": false
+  },
+  {
+   "id": "45394375-B97F-4A1E-A0FB-0B851D911B11",
+   "title": "shop",
+   "pinned": false,
+   "unread_count": 0,
+   "git_branches": [],
+   "branch_summary": null,
+   "selected": false
+  },
+  {
+   "id": "3ECB78B6-4532-4CB9-9417-EB830249CD8C",
+   "title": "invoices",
+   "pinned": false,
+   "unread_count": 0,
+   "git_branches": [],
+   "branch_summary": null,
+   "selected": false
+  },
+  {
+   "id": "6B17901B-98B7-4A43-AC8F-A79C081C9D22",
+   "title": "slides",
+   "pinned": false,
+   "unread_count": 0,
+   "git_branches": [],
+   "branch_summary": null,
+   "selected": false
+  },
+  {
+   "id": "5FD57935-6E42-46F3-940D-E68C31B495C3",
+   "title": "demo",
+   "pinned": false,
+   "unread_count": 0,
+   "git_branches": [],
+   "branch_summary": null,
+   "selected": false
+  },
+  {
+   "id": "6E878433-BB2A-4961-B27D-E3868A28938B",
+   "title": "sandbox",
+   "pinned": false,
+   "unread_count": 0,
+   "git_branches": [],
+   "branch_summary": null,
+   "selected": false
+  },
+  {
+   "id": "826CDA32-4FE3-4EAF-AE51-3BC02A4B19DE",
+   "title": "scratch",
+   "pinned": false,
+   "unread_count": 0,
+   "git_branches": [],
+   "branch_summary": null,
+   "selected": false
+  }
+ ]
+}
