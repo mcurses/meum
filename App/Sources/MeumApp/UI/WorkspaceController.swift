@@ -140,6 +140,10 @@ final class WorkspaceController: NSObject, SidebarHost {
         var a = CardAppearance.current
         a.radius = CGFloat(new.cornerRadius)
         a.background = new.background
+        a.wallpaper = new.wallpaper
+        a.liquidStyle = new.liquidStyle
+        a.frameSaturation = CGFloat(new.focusFrameSaturation)
+        a.frameOpacity = CGFloat(new.focusFrameOpacity)
         a.tint = CGFloat(new.glassTint)
         a.solid = SidebarView.nsColor(hex: new.solidColor) ?? a.solid
         let looks = a != CardAppearance.current || old == nil
@@ -155,6 +159,7 @@ final class WorkspaceController: NSObject, SidebarHost {
             Wallpaper.shared.blur = CGFloat(new.glassBlur)
         }
         sidebarCard.sidebar.collapsed = new.sidebarCollapsed
+        sidebarCard.sidebar.display = SidebarDisplay(new)
         guard let old else { return }   // the first call comes before start(), which lays out
         if old.sidebarCollapsed != new.sidebarCollapsed {
             // widgets learn about the rail first, so a card's new preferred height is in the same animation
@@ -343,6 +348,10 @@ final class WorkspaceController: NSObject, SidebarHost {
         v.strip.onDragBegan = { [weak self] tab, p in self?.tabDragBegan(tab, from: id, at: p) }
         v.strip.onDragMoved = { [weak self] p in self?.tabDragMoved(p) }
         v.strip.onDragEnded = { [weak self] p in self?.tabDragEnded(p) }
+        // a one-tab card has no strip: its grab handle drags that tab the same way
+        v.grabHandle.onDragBegan = { [weak self] tab, p in self?.tabDragBegan(tab, from: id, at: p) }
+        v.grabHandle.onDragMoved = { [weak self] p in self?.tabDragMoved(p) }
+        v.grabHandle.onDragEnded = { [weak self] p in self?.tabDragEnded(p) }
         v.strip.onSelect = { [weak self] tab in
             self?.store.mutate(.structure(animate: false), save: true) { s in
                 guard let ws = s.workspace(containingTab: tab) else { return }
@@ -417,7 +426,7 @@ final class WorkspaceController: NSObject, SidebarHost {
                 let focused = card.id == ws.focusedCard?.id
                 v.strip.focused = focused
                 v.glass.focused = focused
-                v.glass.accent = SidebarView.nsColor(hex: ws.color)?.withAlphaComponent(0.8)
+                v.glass.accent = SidebarView.nsColor(hex: ws.color)   // its saturation and opacity: CardAppearance
             }
         }
         sidebarCard.sidebar.reload()
@@ -759,7 +768,9 @@ final class WorkspaceController: NSObject, SidebarHost {
             return SidebarItem(id: ws.id, name: ws.name, color: ws.color, icon: ws.icon, pinned: ws.pinned, selected: ws.id == sel,
                                agents: agents.summary(forWorkspace: ws), branch: ex?.branch,
                                status: ex?.status.map { SidebarStatus(key: $0.key, value: $0.entry.value, color: $0.entry.color,
-                                                                     url: $0.entry.url) } ?? [])
+                                                                     url: $0.entry.url) } ?? [],
+                               directory: ws.focusedCard?.selectedTab.cwd ?? ws.cwd, metadata: ws.metadata ?? [:],
+                               ports: ex?.ports ?? [], group: ws.group)
         }
     }
 
@@ -773,6 +784,29 @@ final class WorkspaceController: NSObject, SidebarHost {
     }
     func sidebarSetPinned(_ id: UUID, _ pinned: Bool) { store.mutate(.cosmetic) { $0.setPinned(id, pinned) } }
     func sidebarDidEndInteraction() { focusTerminal() }
+    var sidebarGroups: [SidebarGroup] {
+        store.state.groups.map { SidebarGroup(id: $0.id, name: $0.name, collapsed: $0.collapsed) }
+    }
+    func sidebarNewGroup(_ ids: [UUID]) -> UUID? {
+        var made: UUID?
+        let names = Set(store.state.groups.map(\.name))
+        let name = (1...).lazy.map { $0 == 1 ? "Group" : "Group \($0)" }.first { !names.contains($0) }!
+        store.mutate(.cosmetic) { made = $0.createGroup(name: name, workspaces: ids) }
+        return made
+    }
+    func sidebarSetGroup(_ ids: [UUID], _ group: UUID?) { store.mutate(.cosmetic) { $0.setGroup(ids, to: group) } }
+    func sidebarMoveWorkspaces(_ ids: [UUID], before anchor: UUID?, group: UUID?) {
+        store.mutate(.cosmetic) { $0.moveWorkspaces(ids, before: anchor, group: group) }
+    }
+    func sidebarMoveGroup(_ id: UUID, before anchor: UUID?) { store.mutate(.cosmetic) { $0.moveGroup(id, before: anchor) } }
+    func sidebarRenameGroup(_ id: UUID, to name: String) { store.mutate(.cosmetic) { $0.renameGroup(id, to: name) } }
+    func sidebarSetGroupCollapsed(_ id: UUID, _ collapsed: Bool) {
+        store.mutate(.cosmetic) { $0.setGroupCollapsed(id, collapsed) }
+    }
+    func sidebarUngroup(_ id: UUID) { store.mutate(.cosmetic) { $0.ungroup(id) } }
+    func sidebarOpenPort(_ port: Int) {
+        if let url = URL(string: "http://localhost:\(port)") { openURL(url) }
+    }
     func sidebarStatusClicked(_ id: UUID, key: String) {
         guard let entry = workspaceExtras[id]?.status.first(where: { $0.key == key })?.entry else { return }
         onStatusClicked?(id, key, entry)

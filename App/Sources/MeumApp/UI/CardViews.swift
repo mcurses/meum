@@ -5,6 +5,12 @@ import MeumCore
 struct CardAppearance: Equatable {
     var radius: CGFloat = 12
     var background: Settings.Background = .glass
+    /// The pinned wallpaper under the material (not under `solid`).
+    var wallpaper = true
+    var liquidStyle: Settings.LiquidStyle = .regular
+    /// The focused card's frame (`Settings.focusFrameSaturation` / `focusFrameOpacity`).
+    var frameSaturation: CGFloat = 1
+    var frameOpacity: CGFloat = 0.8
     var tint: CGFloat = 0.35
     var solid: NSColor = NSColor(calibratedRed: 0.086, green: 0.094, blue: 0.114, alpha: 1)
 
@@ -14,11 +20,15 @@ struct CardAppearance: Equatable {
 /// The rounded body of a card. Not flipped (the wallpaper anchoring math assumes AppKit coordinates, as in the
 /// floating-layout spike); content goes into the flipped `content` view.
 ///
-/// Background, bottom to top: the wallpaper layer (glass), a behind-window vibrancy view (vibrancy), the tint
-/// view, then the content. A solid background is the layer's own colour.
+/// Background, bottom to top: the pinned wallpaper layer (when on), the material (a vibrancy view, or a Liquid
+/// Glass view on macOS 26), the tint view, then the content. A solid background is the layer's own colour. Over
+/// the pinned wallpaper the materials blur and refract that still picture (vibrancy within the window); without it
+/// they show what is behind meum.
 final class GlassView: NSView {
     private let wallLayer = CALayer()
     private let effect = NSVisualEffectView()
+    /// The macOS 26 Liquid Glass view, made on first use.
+    private var liquid: NSView?
     private let tintView = NSView()
     let content = FlippedView()
     /// Where this card sits on screen (AppKit global coordinates). Anchors the wallpaper.
@@ -67,30 +77,50 @@ final class GlassView: NSView {
         effect.maskImage = Self.mask(radius: a.radius)
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        switch a.background {
-        case .glass:
-            wallLayer.isHidden = false
-            effect.isHidden = true
-            tintView.isHidden = false
-            layer?.backgroundColor = NSColor(calibratedWhite: 0.06, alpha: 1).cgColor
-        case .vibrancy:
-            wallLayer.isHidden = true
-            effect.isHidden = false
-            tintView.isHidden = false
-            layer?.backgroundColor = NSColor.clear.cgColor
-        case .solid:
-            wallLayer.isHidden = true
-            effect.isHidden = true
-            tintView.isHidden = true
-            layer?.backgroundColor = a.solid.cgColor
-        }
+        let pinned = a.wallpaper && a.background != .solid
+        wallLayer.isHidden = !pinned
+        // under the pinned wallpaper an opaque base, so nothing behind meum shows through its edges
+        layer?.backgroundColor = a.background == .solid ? a.solid.cgColor
+            : pinned ? NSColor(calibratedWhite: 0.06, alpha: 1).cgColor : NSColor.clear.cgColor
+        var material = a.background
+        if material == .liquid, Self.liquidAvailable == false { material = .vibrancy }
+        effect.isHidden = material != .vibrancy
+        // over the pinned wallpaper, vibrancy blurs that picture (inside the window); without it, what is behind
+        effect.blendingMode = pinned ? .withinWindow : .behindWindow
+        if material == .liquid { showLiquid(a) } else { liquid?.isHidden = true }
+        tintView.isHidden = material == .solid
         tintView.alphaValue = a.tint
         CATransaction.commit()
         reloadWallpaper()
+        updateBorder()
+    }
+
+    static var liquidAvailable: Bool {
+        if #available(macOS 26.0, *) { return true }
+        return false
+    }
+
+    /// Shows (making it on first use) the Liquid Glass view, just above the wallpaper and below the tint.
+    private func showLiquid(_ a: CardAppearance) {
+        guard #available(macOS 26.0, *) else { return }
+        let g: NSGlassEffectView
+        if let existing = liquid as? NSGlassEffectView {
+            g = existing
+        } else {
+            g = NSGlassEffectView()
+            g.frame = bounds
+            g.autoresizingMask = [.width, .height]
+            addSubview(g, positioned: .below, relativeTo: tintView)
+            liquid = g
+        }
+        g.isHidden = false
+        g.cornerRadius = a.radius
+        g.style = a.liquidStyle == .clear ? .clear : .regular
     }
 
     func reloadWallpaper() {
-        wallLayer.contents = CardAppearance.current.background == .glass ? Wallpaper.shared.image : nil
+        let a = CardAppearance.current
+        wallLayer.contents = a.wallpaper && a.background != .solid ? Wallpaper.shared.image : nil
         wallLayer.contentsScale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
         positionWallpaper()
     }
@@ -119,9 +149,19 @@ final class GlassView: NSView {
     }
 
     private func updateBorder() {
-        let c = focused ? (accent ?? NSColor(white: 1, alpha: 0.8)) : NSColor(white: 1, alpha: 0.08)
+        let a = CardAppearance.current
+        let c = focused ? Self.frameColor(accent, saturation: a.frameSaturation, opacity: a.frameOpacity)
+            : NSColor(white: 1, alpha: 0.08)
         layer?.borderColor = c.cgColor
         layer?.borderWidth = focused ? 1.5 : 1
+    }
+
+    /// The focus frame: the workspace colour with its saturation scaled (white without a colour), at `opacity`.
+    static func frameColor(_ accent: NSColor?, saturation: CGFloat, opacity: CGFloat) -> NSColor {
+        guard let c = accent?.usingColorSpace(.sRGB) else { return NSColor(white: 1, alpha: opacity) }
+        var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0, al: CGFloat = 0
+        c.getHue(&h, saturation: &s, brightness: &b, alpha: &al)
+        return NSColor(hue: h, saturation: s * max(0, min(1, saturation)), brightness: b, alpha: opacity)
     }
 
     override func layout() {

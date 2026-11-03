@@ -478,6 +478,9 @@ final class WidgetManager {
         switch s.background {
         case .glass: material = .glass
         case .vibrancy: material = .vibrancy; lum = 0.2
+        // MeumKit's Material has no Liquid Glass case (adding one would trip widgets built before it): the nearest
+        // existing look is the glass over the pinned wallpaper, else the frosted vibrancy
+        case .liquid: material = s.wallpaper ? .glass : .vibrancy; lum = s.liquidStyle == .clear ? 0.25 : 0.18
         case .solid:
             material = .solid
             if let c = card.solid.usingColorSpace(.sRGB) {

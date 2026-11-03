@@ -9,6 +9,7 @@ import SwiftUI
 final class SettingsWindowController: NSObject, NSWindowDelegate {
     let settings: AppSettings
     weak var widgets: WidgetManager?
+    var checkForUpdates: (() -> Void)?
     private var window: NSWindow?
 
     init(settings: AppSettings) {
@@ -17,7 +18,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
 
     func show() {
         if window == nil {
-            let host = NSHostingController(rootView: SettingsView(model: settings, widgets: widgets))
+            let host = NSHostingController(rootView: SettingsView(model: settings, widgets: widgets, checkForUpdates: checkForUpdates))
             let w = NSWindow(contentViewController: host)
             w.title = "\(Product.name) Settings"
             w.styleMask = [.titled, .closable, .miniaturizable, .resizable]
@@ -43,6 +44,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
 struct SettingsView: View {
     @ObservedObject var model: AppSettings
     let widgets: WidgetManager?
+    var checkForUpdates: (() -> Void)?
     @State private var configPath = ""
     @State private var hooks: [String] = []
     @State private var hooksLoading = false
@@ -57,24 +59,52 @@ struct SettingsView: View {
                 slider("Corner radius", "cornerRadius", 0...28, step: 1, unit: "pt") { $0.cornerRadius }
                 slider("Sidebar width", "sidebarWidth", 160...480, step: 4, unit: "pt") { $0.sidebarWidth }
             }
+            Section("Sidebar") {
+                Toggle("Git branch", isOn: plainBool("sidebarShowBranch") { $0.sidebarShowBranch })
+                Toggle("Folder", isOn: plainBool("sidebarShowDirectory") { $0.sidebarShowDirectory })
+                Toggle("Status entries", isOn: plainBool("sidebarShowStatus") { $0.sidebarShowStatus })
+                Toggle("Workspace labels", isOn: plainBool("sidebarShowMetadata") { $0.sidebarShowMetadata })
+                Toggle("Listening ports (dev servers)", isOn: plainBool("sidebarShowPorts") { $0.sidebarShowPorts })
+                Toggle("Claude session dots", isOn: plainBool("sidebarShowAgentDots") { $0.sidebarShowAgentDots })
+                Toggle("Shortcut hints (⌘1…⌘9)", isOn: plainBool("sidebarShowShortcuts") { $0.sidebarShowShortcuts })
+                Toggle("Pin on pinned workspaces", isOn: plainBool("sidebarShowPin") { $0.sidebarShowPin })
+                Text("Status entries come from `meum status set`, workspace labels from `meum workspace meta`. Folder and branch follow the focused tab. A port opens localhost in the browser.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             WidgetsSection(model: model, widgets: widgets, set: set)
             Section("Background") {
                 Picker("Material", selection: Binding(get: { s.background }, set: { set("background", .string($0.rawValue)) })) {
-                    Text("Wallpaper glass").tag(MSettings.Background.glass)
+                    Text("Tint").tag(MSettings.Background.glass)
                     Text("Vibrancy").tag(MSettings.Background.vibrancy)
+                    if GlassView.liquidAvailable { Text("Liquid Glass").tag(MSettings.Background.liquid) }
                     Text("Solid colour").tag(MSettings.Background.solid)
                 }
                 .pickerStyle(.segmented)
-                if s.background == .glass {
-                    slider("Blur", "glassBlur", 0...30, step: 0.5, unit: "pt") { $0.glassBlur }
+                if s.background == .liquid {
+                    Picker("Liquid Glass", selection: Binding(get: { s.liquidStyle }, set: { set("liquidStyle", .string($0.rawValue)) })) {
+                        Text("Regular").tag(MSettings.LiquidStyle.regular)
+                        Text("Clear").tag(MSettings.LiquidStyle.clear)
+                    }
+                    .pickerStyle(.segmented)
                 }
                 if s.background != .solid {
+                    Toggle("Pinned wallpaper underneath", isOn: plainBool("wallpaper") { $0.wallpaper })
+                    Text(s.wallpaper ? "The material shows your desktop picture, blurred and still, not the windows behind meum."
+                                     : "The material shows whatever is behind meum.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    if s.wallpaper {
+                        slider("Wallpaper blur", "glassBlur", 0...30, step: 0.5, unit: "pt") { $0.glassBlur }
+                    }
                     slider("Tint", "glassTint", 0...1, step: 0.01, unit: "") { $0.glassTint }
                 } else {
                     ColorPicker("Colour", selection: Binding(get: { Color(nsColor: SidebarView.nsColor(hex: s.solidColor) ?? .black) },
                                                              set: { set("solidColor", .string(Self.hex($0))) }),
                                 supportsOpacity: false)
                 }
+                slider("Focus frame colour", "focusFrameSaturation", 0...1, step: 0.05, unit: "") { $0.focusFrameSaturation }
+                slider("Focus frame strength", "focusFrameOpacity", 0...1, step: 0.05, unit: "") { $0.focusFrameOpacity }
+                Text("The frame of the focused card: colour 1 is the workspace colour, 0 grey.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             Section("Terminal") {
                 Picker("Font", selection: Binding(get: { s.fontFamily ?? "" },
@@ -98,6 +128,8 @@ struct SettingsView: View {
                             .onSubmit { set("ghosttyConfigPath", configPath.isEmpty ? .null : .string(configPath)) }
                         Button("Choose…") { chooseConfig() }
                         if s.ghosttyConfigPath != nil {
+                            Button("Reload") { GhosttyApp.shared.reloadFromDisk() }
+                                .help("Read the config file again after editing it")
                             Button("Clear") { configPath = ""; set("ghosttyConfigPath", .null) }
                         }
                     }
@@ -111,6 +143,17 @@ struct SettingsView: View {
                     .font(.caption).foregroundStyle(.secondary)
                 Toggle("Reattach running sessions on launch", isOn: plainBool("reattachSessions") { $0.reattachSessions })
                 Toggle("Resume Claude sessions after a reboot", isOn: plainBool("resumeClaude") { $0.resumeClaude })
+            }
+            Section("Updates") {
+                Toggle("Check for updates automatically", isOn: plainBool("checkUpdates") { $0.checkUpdates })
+                HStack {
+                    Text("Version \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?")")
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Check Now") { checkForUpdates?() }
+                }
+                Text("New versions come from github.com/mcurses/meum. Installing restarts meum; your terminals keep running.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             ShortcutsSection(model: model, set: set)
             Section("Claude hooks") {

@@ -50,6 +50,29 @@ final class AppAPI {
     }
 
     /// `widget.catalog`, `widget.install`, `widget.update`: they wait for the network.
+    func handleUpdate(method: String, params p: JSON) async throws -> JSON {
+        guard let u = control.updater else { throw ControlError.unavailable("no updater") }
+        guard u.canUpdate else { return u.statusJSON(nil) }
+        do {
+            let r = try await u.check()
+            if method == MeumMethod.updateInstall {
+                guard let r else { return u.statusJSON(nil) }
+                let relaunch = p["relaunch"]?.boolValue ?? true
+                try await u.install(r, relaunch: false)
+                if relaunch {
+                    // answer first, then restart
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { u.relaunch(Bundle.main.bundleURL) }
+                }
+                return ["installed": .string(r.version), "relaunching": .bool(relaunch)]
+            }
+            return u.statusJSON(r)
+        } catch let e as ControlError {
+            throw e
+        } catch {
+            throw ControlError.unavailable("\(error)")
+        }
+    }
+
     func handleLibrary(method: String, params p: JSON) async throws -> JSON {
         let installer = control.installer
         do {
@@ -153,6 +176,46 @@ final class AppAPI {
             let now = state.workspace(ws.id)?.metadata ?? [:]
             return ["id": .string(ws.id.uuidString), "metadata": .object(now.mapValues { .string($0) })]
 
+        case MeumMethod.groupList:
+            return ["groups": ModelJSON.groups(state)]
+
+        case MeumMethod.groupNew:
+            let ids = try workspaceList(p["workspaces"])
+            guard !ids.isEmpty else { throw ControlError.invalidParams("needs 'workspaces' (one or more)") }
+            let name = p["name"]?.stringValue?.trimmingCharacters(in: .whitespaces) ?? ""
+            guard !name.isEmpty else { throw ControlError.invalidParams("needs 'name'") }
+            var made: UUID?
+            store.mutate(.cosmetic) { made = $0.createGroup(name: name, workspaces: ids) }
+            guard let made, let g = state.group(made) else { throw ControlError.internalError("group not created") }
+            return ModelJSON.group(g, in: state)
+
+        case MeumMethod.groupRename:
+            let g = try groupRef(p)
+            guard let name = p["name"]?.stringValue, !name.trimmingCharacters(in: .whitespaces).isEmpty else {
+                throw ControlError.invalidParams("needs 'name'")
+            }
+            store.mutate(.cosmetic) { $0.renameGroup(g.id, to: name) }
+            return ModelJSON.group(state.group(g.id)!, in: state)
+
+        case MeumMethod.groupSetCollapsed:
+            let g = try groupRef(p)
+            let want = p["collapsed"].flatMap { $0.isNull ? nil : $0.boolValue } ?? !g.collapsed
+            store.mutate(.cosmetic) { $0.setGroupCollapsed(g.id, want) }
+            return ["collapsed": .bool(want)]
+
+        case MeumMethod.groupUngroup:
+            let g = try groupRef(p)
+            store.mutate(.cosmetic) { $0.ungroup(g.id) }
+            return .null
+
+        case MeumMethod.workspaceSetGroup:
+            var ids = try workspaceList(p["ids"])
+            if ids.isEmpty { ids = [try workspace(p).id] }
+            let target: UUID?
+            if let v = p["group"], !v.isNull, v.stringValue != "none" { target = try groupRef(["group": v]).id } else { target = nil }
+            store.mutate(.cosmetic) { $0.setGroup(ids, to: target) }
+            return ["groups": ModelJSON.groups(state)]
+
         case MeumMethod.sidebarSetCollapsed:
             let current = controller.settings.sidebarCollapsed
             let want = p["collapsed"].flatMap { $0.isNull ? nil : $0.boolValue } ?? !current
@@ -191,6 +254,25 @@ final class AppAPI {
 
         case MeumMethod.tabMove:
             return try moveTab(p)
+
+        case MeumMethod.tabFocused:
+            guard let ws = state.selectedWorkspace, let tab = ModelJSON.focusedTab(ws) else {
+                throw ControlError.notFound("no focused tab")
+            }
+            return ["workspace": .string(ws.id.uuidString), "tab": .string(tab.id.uuidString),
+                    "widget": tab.widget.map { .string($0) } ?? .null]
+
+        case MeumMethod.tabPaste:
+            let (_, tab) = try self.tab(p)
+            guard let text = p["text"]?.stringValue else { throw ControlError.invalidParams("needs 'text'") }
+            if tab.isWidget { throw ControlError.unavailable("tab \(tab.id.uuidString) is a widget tab, not a terminal") }
+            guard let surface = controller.surface(forTab: tab.id) else {
+                throw ControlError.unavailable("tab \(tab.id.uuidString) has no attached terminal yet (its workspace was not shown since meum started)")
+            }
+            // ghostty's paste path: bracketed exactly when the program asked for it; the surface may be hidden
+            // (a parked workspace) and keeps its focus state either way
+            surface.insertPasted(text: text)
+            return ["tab": .string(tab.id.uuidString)]
 
         case MeumMethod.splitResize:
             guard let ref = p["split"]?.stringValue ?? p["id"]?.stringValue, let id = UUID(uuidString: ref),
@@ -382,6 +464,24 @@ final class AppAPI {
     }
 
     // MARK: references
+
+    /// A list of workspace references (ids or unique names).
+    private func workspaceList(_ v: JSON?) throws -> [UUID] {
+        guard let v, !v.isNull else { return [] }
+        guard let arr = v.arrayValue else { throw ControlError.invalidParams("expected a list of workspaces") }
+        return try arr.map { try workspace(["id": $0]).id }
+    }
+
+    /// `group`: an id or a unique group name.
+    private func groupRef(_ p: JSON) throws -> WorkspaceGroup {
+        guard let ref = p["group"]?.stringValue ?? p["id"]?.stringValue, !ref.isEmpty else {
+            throw ControlError.invalidParams("needs 'group' (an id or a name)")
+        }
+        if let id = UUID(uuidString: ref), let g = state.group(id) { return g }
+        let byName = state.groups.filter { $0.name == ref }
+        if byName.count == 1 { return byName[0] }
+        throw ControlError.notFound(byName.isEmpty ? "no group '\(ref)'" : "several groups are called '\(ref)'")
+    }
 
     private func workspace(_ p: JSON, keys: [String] = ["id", "workspace"]) throws -> Workspace {
         guard let ref = keys.lazy.compactMap({ p[$0]?.stringValue }).first, !ref.isEmpty else {

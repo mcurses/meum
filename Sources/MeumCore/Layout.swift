@@ -435,15 +435,23 @@ extension AppState {
         if selectedWorkspaceID == id {
             selectedWorkspaceID = workspaces.isEmpty ? nil : workspaces[min(i, workspaces.count - 1)].id
         }
+        normalizeGroups()
         return removed
     }
 
     /// Moves workspace `id` so it ends up at `index` (clamped).
     @discardableResult
+    /// Moving it into the middle of a group makes it a member; moving it away from its group takes it out.
     public mutating func moveWorkspace(_ id: UUID, to index: Int) -> Bool {
         guard let from = self.index(of: id) else { return false }
         let ws = workspaces.remove(at: from)
-        workspaces.insert(ws, at: min(max(0, index), workspaces.count))
+        let i = min(max(0, index), workspaces.count)
+        let before = i > 0 ? workspaces[i - 1].group : nil, after = i < workspaces.count ? workspaces[i].group : nil
+        var moved = ws
+        if before != nil, before == after { moved.group = before }
+        else if let g = ws.group, before != g, after != g { moved.group = nil }
+        workspaces.insert(moved, at: i)
+        normalizeGroups()
         return true
     }
 

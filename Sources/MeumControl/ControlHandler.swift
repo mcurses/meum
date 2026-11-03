@@ -33,6 +33,18 @@ public enum MeumMethod {
     public static let workspaceSetMeta = "workspace.setMeta"
     /// `{collapsed?}`: collapses or expands the sidebar (without `collapsed`: toggles). -> `{collapsed}`.
     public static let sidebarSetCollapsed = "sidebar.setCollapsed"
+    /// `{}` -> `{groups: [{id, name, collapsed, workspaces: [id…]}]}` in sidebar order.
+    public static let groupList = "group.list"
+    /// `{name, workspaces: [ws…]}` -> the group. The workspaces leave other groups; the group sits where the first is.
+    public static let groupNew = "group.new"
+    /// `{group, name}`. `group` is an id or a unique name everywhere.
+    public static let groupRename = "group.rename"
+    /// `{group, collapsed?}` (without `collapsed`: toggles) -> `{collapsed}`.
+    public static let groupSetCollapsed = "group.setCollapsed"
+    /// `{group}`: dissolves the group; its workspaces stay where they are.
+    public static let groupUngroup = "group.ungroup"
+    /// `{id | ids: [ws…], group | null}`: into a group (at its end), or out of theirs.
+    public static let workspaceSetGroup = "workspace.setGroup"
     public static let workspacePin = "workspace.pin"
     public static let workspaceMarkRead = "workspace.markRead"
     public static let workspaceMarkUnread = "workspace.markUnread"
@@ -40,6 +52,12 @@ public enum MeumMethod {
     public static let tabSelect = "tab.select"
     public static let tabClose = "tab.close"
     public static let tabSendText = "tab.sendText"
+    /// `{}` -> `{workspace, tab}`: the selected workspace and its focused tab (a terminal or a widget tab).
+    public static let tabFocused = "tab.focused"
+    /// `{tab, text}` -> `{tab}`: text pasted into a tab's terminal as a paste (bracketed when its program
+    /// enabled mode 2004), wherever that tab is; no focus change, no clipboard. Errors: not_found (no such tab),
+    /// unavailable (a widget tab, or a terminal not attached yet: its workspace was not shown since meum started).
+    public static let tabPaste = "tab.paste"
     public static let tabMove = "tab.move"
     public static let splitResize = "split.resize"
     public static let settingsGet = "settings.get"
@@ -66,6 +84,10 @@ public enum MeumMethod {
     public static let widgetAllow = "widget.allow"
     /// Methods that wait for the network: answered off the request queue.
     public static let widgetAsync: Set<String> = [widgetCatalog, widgetInstall, widgetUpdate]
+    /// `{}` -> `{current, available, latest?, url?, page?, canUpdate, reason?}`. Asks GitHub (async).
+    public static let updateCheck = "app.update.check"
+    /// `{relaunch?}` -> as check, after installing; then meum restarts (unless relaunch is false). Async.
+    public static let updateInstall = "app.update.install"
     public static let agentHook = "agent.hook"
     public static let eventsSubscribe = "events.subscribe"
 
@@ -75,9 +97,10 @@ public enum MeumMethod {
     /// Everything the app's handler must implement.
     public static let handlerOwned: [String] = [
         tree, workspaceList, workspaceNew, workspaceSelect, workspaceRename, workspaceClose, workspaceReorder,
-        workspaceSetColor, workspaceSetIcon, workspaceSetMeta, workspacePin, workspaceMarkRead, workspaceMarkUnread, sidebarSetCollapsed,
-        tabNew, tabSelect, tabClose, tabSendText, tabMove, splitResize, settingsGet, settingsSet, statusSet, statusClear, notify, agentHook,
+        workspaceSetColor, workspaceSetIcon, workspaceSetMeta, workspacePin, workspaceSetGroup,
+        groupList, groupNew, groupRename, groupSetCollapsed, groupUngroup, workspaceMarkRead, workspaceMarkUnread, sidebarSetCollapsed,
+        tabNew, tabSelect, tabClose, tabSendText, tabFocused, tabPaste, tabMove, splitResize, settingsGet, settingsSet, statusSet, statusClear, notify, agentHook,
         widgetList, widgetReload, widgetEnable, widgetSend, widgetScreenshot,
-        widgetCatalog, widgetInstall, widgetUpdate, widgetRemove, widgetAllow,
+        widgetCatalog, widgetInstall, widgetUpdate, widgetRemove, widgetAllow, updateCheck, updateInstall,
     ]
 }

@@ -75,7 +75,12 @@ AgentSnapshot { sessionID: String, configDir: String?, transcriptPath: String?, 
   - workspaces: `workspace.list`, `workspace.new {name?, cwd?, color?}`, `workspace.select`, `workspace.rename`,
     `workspace.close`, `workspace.reorder {id, index}`, `workspace.setColor`, `workspace.pin`
   - tabs: `tab.new {workspace?, card?, cwd?, command?, split?: "right"|"down"}`, `tab.select`, `tab.close`,
-    `tab.sendText {tab, text}`
+    `tab.sendText {tab, text}` (typed: a newline submits),
+    `tab.paste {tab, text}` (a paste through the tab's terminal, bracketed when its program enabled mode 2004;
+    no focus change, no clipboard; works while the workspace is hidden. Errors: `not_found`, and `unavailable`
+    for a widget tab or a terminal not attached yet, i.e. its workspace not shown since launch),
+    `tab.focused` -> `{workspace, tab, widget}` (the selected workspace's focused tab; a dictation tool can
+    paste into the tab where dictation started)
   - moving and resizing: `tab.move {tab, card?, index?, split?: "left"|"right"|"up"|"down"}` (without `split`:
     into `card`, default the tab's own card, at `index` = its position there afterwards, default the end; with
     `split`: `card` is split and the tab goes into the new card on that side; a card left empty is removed and
@@ -101,10 +106,12 @@ AgentSnapshot { sessionID: String, configDir: String?, transcriptPath: String?, 
     - `SessionStart` → idle; record the session id, overwriting the old one (fork gives a new id).
     - `UserPromptSubmit` → running.
     - `Stop` → idle, unread = true unless that tab is focused.
-    - `Notification(permission_prompt | idle_prompt | elicitation_dialog)` → needsInput, unread.
+    - `Notification(permission_prompt | elicitation_dialog)` → needsInput, unread. `idle_prompt` is ignored: Claude Code
+      sends it 60 s after every finished turn, which `Stop` already covers.
     - `SessionEnd` → remove.
   - Dedupe identical events.
-  - Workspace summary: live session count, any unread, any needsInput.
+  - Workspace summary: live session count, any unread, any needsInput, and how many sessions need input or are unread
+    (the sidebar draws one dot per session).
   - `markRead(tab | workspace)`.
 - **Resume builder:** `AgentSnapshot` → the shell command to resume:
   `cd <cwd> && CLAUDE_CONFIG_DIR=<dir> claude --resume <id>`. The `CLAUDE_CONFIG_DIR=` part is left out when the

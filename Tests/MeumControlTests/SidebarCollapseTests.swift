@@ -53,4 +53,21 @@ final class SidebarCollapseTests: XCTestCase {
         XCTAssertTrue(MeumMethod.handlerOwned.contains(MeumMethod.workspaceSetIcon))
         XCTAssertTrue(MeumMethod.handlerOwned.contains(MeumMethod.sidebarSetCollapsed))
     }
+
+    func testSidebarShowSwitches() throws {
+        var s = Settings()
+        XCTAssertTrue(s.sidebarShowBranch && s.sidebarShowShortcuts && s.sidebarShowAgentDots && s.sidebarShowStatus && s.sidebarShowPin)
+        XCTAssertFalse(s.sidebarShowDirectory || s.sidebarShowMetadata)
+        for k in SettingsJSON.sidebarShowKeys {
+            let before = try XCTUnwrap(SettingsJSON.value(s, k)?.boolValue, k)
+            try SettingsJSON.set(&s, key: k, value: .bool(!before))
+            XCTAssertEqual(SettingsJSON.value(s, k)?.boolValue, !before, k)
+        }
+        XCTAssertThrowsError(try SettingsJSON.set(&s, key: "sidebarShowBranch", value: "maybe"))
+        // an older settings.json without the keys gets the defaults; a stored false survives a round trip
+        let old = try JSONDecoder().decode(Settings.self, from: Data(#"{"cardGap": 10}"#.utf8))
+        XCTAssertTrue(old.sidebarShowShortcuts)
+        var off = Settings(); off.sidebarShowShortcuts = false
+        XCTAssertFalse(try JSONDecoder().decode(Settings.self, from: JSONEncoder().encode(off)).sidebarShowShortcuts)
+    }
 }

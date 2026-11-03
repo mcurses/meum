@@ -13,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var settings: AppSettings!
     var settingsWindow: SettingsWindowController!
     var widgets: WidgetManager!
+    var updater: Updater!
 
     init(options: AppOptions) {
         self.options = options
@@ -49,8 +50,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         control.start(socket: paths.socket)
         settings.onChange = { [weak self] old, new, keys in self?.settingsChanged(old: old, new: new, keys: keys) }
         settingsWindow = SettingsWindowController(settings: settings)
+        updater = Updater(stateDir: paths.directory, feedOverride: options.updateFeed, launchEnv: options.launchEnv,
+                          isolated: options.isolated)
+        updater.enabled = { [weak self] in self?.settings.value.checkUpdates ?? false }
+        control.updater = updater
+        settingsWindow.checkForUpdates = { [weak self] in self?.updater.checkInteractively() }
         menu = MainMenu(controller: controller)
         menu.onSettings = { [weak self] in self?.settingsWindow.show() }
+        menu.onCheckForUpdates = { [weak self] in self?.updater.checkInteractively() }
         menu.install(settings: settings.value)
         controller.start()
         widgets = WidgetManager(controller: controller, control: control, directory: options.widgetsDir)
@@ -60,6 +67,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         widgets.startHelpers()
         widgets.reload()
         NSApp.activate(ignoringOtherApps: true)
+        if options.debugDir == nil { updater.startAutomaticChecks() }
 
         if let dir = options.debugDir {
             debug = DebugControl(dir: dir, controller: controller, control: control)

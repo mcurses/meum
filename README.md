@@ -16,6 +16,9 @@ brew install --cask mcurses/meum/meum
 This needs Apple Silicon and macOS 14 or later. The app is signed and notarized. Releases are on this repo's
 [Releases](https://github.com/mcurses/meum/releases) page.
 
+meum updates itself: it looks for a new release at launch and once a day (Settings ▸ Updates, or meum ▸ Check for
+Updates…), and installs it with one click. Your terminals keep running across the restart.
+
 The cask also puts the `meum` CLI on your PATH. `meum help` lists what it can do: workspaces, tabs, status entries,
 notifications, settings and widgets, all over meum's local control socket.
 

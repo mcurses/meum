@@ -60,11 +60,22 @@ public enum CLI {
                                               --config: its settings (e.g. '{"url":"http://localhost:5173"}')
       tab select|close <tab>
       tab send [--enter] <tab> <text|->       type text into a tab ('-' reads stdin)
+      tab paste <tab> <text|->                paste text into a tab's terminal (bracketed paste; nothing
+                                              is submitted; works in hidden workspaces)
+      tab focused                             the selected workspace's focused tab
       tab move <tab> [--card CARD] [--index N] [--split left|right|up|down]
                                               move a tab into a card at a position (default: its own card,
                                               at the end), or split CARD and put the tab in the new card
       split resize <split> <ratio>            set a split's ratio (share of its first child, 0.1-0.9)
       sidebar [toggle|collapse|expand]        collapse the sidebar to the icon rail, or expand it
+      update [check|install]                  look for a newer meum release, or install it and restart
+      group list                              sidebar groups and their workspaces
+      group new <name> [<ws>...]              group workspaces (default: this one)
+      group add <group> [<ws>...]             move workspaces into a group (default: this one)
+      group remove [<ws>...]                  take workspaces out of their group (default: this one)
+      group rename <group> <name>
+      group collapse|expand|toggle <group>
+      group ungroup <group>                   dissolve a group; its workspaces stay
       settings [get [key]]                    print the settings (or one)
       settings set <key> <value>              change a setting (value is JSON, else a string)
       widget [list]                           the native widgets found, top to bottom as stacked
@@ -174,6 +185,17 @@ public enum CLI {
         case "split": try split(&ctx, rest)
         case "settings": try settings(&ctx, rest)
         case "sidebar": try sidebar(&ctx, rest)
+        case "group", "groups": try group(&ctx, rest)
+        case "update":
+            let p = try parse(&ctx, rest)
+            let sub = p.positionals.first ?? "check"
+            guard ["check", "install"].contains(sub), p.positionals.count <= 1 else { throw CLIError.usage("usage: meum update [check|install]") }
+            ctx.show(try ctx.rpc(sub == "check" ? MeumMethod.updateCheck : MeumMethod.updateInstall)) { r in
+                if let v = r["installed"]?.stringValue { return "installed \(v); meum restarts" }
+                if r["canUpdate"]?.boolValue == false { return r["reason"]?.stringValue ?? "cannot update" }
+                if r["available"]?.boolValue == true { return "meum \(r["latest"]?.stringValue ?? "?") is available (you have \(r["current"]?.stringValue ?? "?"))" }
+                return "up to date (\(r["current"]?.stringValue ?? "?"))"
+            }
         case "notify": try notify(&ctx, rest)
         case "widget", "widgets": try widget(&ctx, rest)
         case "mcp":
@@ -284,6 +306,57 @@ public enum CLI {
         guard p.positionals.count <= 1 else { throw CLIError.usage("usage: meum sidebar [toggle|collapse|expand]") }
         ctx.show(try ctx.rpc(MeumMethod.sidebarSetCollapsed, .object(params))) { r in
             r["collapsed"]?.boolValue == true ? "collapsed" : "expanded"
+        }
+    }
+
+    // MARK: group
+
+    static func group(_ ctx: inout Ctx, _ args: [String]) throws {
+        let usage = "usage: meum group list|new|add|remove|rename|collapse|expand|toggle|ungroup"
+        guard let sub = args.first else { throw CLIError.usage(usage) }
+        let p = try parse(&ctx, Array(args.dropFirst()))
+        let pos = p.positionals
+        func here() throws -> [JSON] {
+            guard let w = ctx.env.env["MEUM_WORKSPACE"], !w.isEmpty else {
+                throw CLIError.usage("name the workspaces (outside a meum tab there is no default)")
+            }
+            return [.string(w)]
+        }
+        func refs(_ names: ArraySlice<String>) throws -> [JSON] {
+            names.isEmpty ? try here() : try names.map { .string(try resolveWorkspace(ctx, $0)) }
+        }
+        func groupLine(_ g: JSON) -> String {
+            let n = g["workspaces"]?.arrayValue?.count ?? 0
+            return "\(g["name"]?.stringValue ?? "")\t\(n) workspace\(n == 1 ? "" : "s")\((g["collapsed"]?.boolValue ?? false) ? "\tcollapsed" : "")"
+        }
+        switch sub {
+        case "list":
+            ctx.show(try ctx.rpc(MeumMethod.groupList)) { r in
+                (r["groups"]?.arrayValue ?? []).map(groupLine).joined(separator: "\n")
+            }
+        case "new":
+            guard let name = pos.first else { throw CLIError.usage("usage: meum group new <name> [<ws>...]") }
+            ctx.show(try ctx.rpc(MeumMethod.groupNew, ["name": .string(name), "workspaces": .array(try refs(pos.dropFirst()))]), human: groupLine)
+        case "add":
+            guard let g = pos.first else { throw CLIError.usage("usage: meum group add <group> [<ws>...]") }
+            printOK(ctx, try ctx.rpc(MeumMethod.workspaceSetGroup, ["ids": .array(try refs(pos.dropFirst())), "group": .string(g)]))
+        case "remove":
+            printOK(ctx, try ctx.rpc(MeumMethod.workspaceSetGroup, ["ids": .array(try refs(pos[...])), "group": .null]))
+        case "rename":
+            guard pos.count == 2 else { throw CLIError.usage("usage: meum group rename <group> <name>") }
+            ctx.show(try ctx.rpc(MeumMethod.groupRename, ["group": .string(pos[0]), "name": .string(pos[1])]), human: groupLine)
+        case "collapse", "expand", "toggle":
+            guard pos.count == 1 else { throw CLIError.usage("usage: meum group \(sub) <group>") }
+            var params: [String: JSON] = ["group": .string(pos[0])]
+            if sub != "toggle" { params["collapsed"] = .bool(sub == "collapse") }
+            ctx.show(try ctx.rpc(MeumMethod.groupSetCollapsed, .object(params))) { r in
+                r["collapsed"]?.boolValue == true ? "collapsed" : "expanded"
+            }
+        case "ungroup":
+            guard pos.count == 1 else { throw CLIError.usage("usage: meum group ungroup <group>") }
+            printOK(ctx, try ctx.rpc(MeumMethod.groupUngroup, ["group": .string(pos[0])]))
+        default:
+            throw CLIError.usage(usage)
         }
     }
 
@@ -412,6 +485,16 @@ public enum CLI {
             var text = p.positionals[1] == "-" ? ctx.env.readStdin() : p.positionals[1]
             if p.has("enter") { text += "\r" }
             printOK(ctx, try ctx.rpc(MeumMethod.tabSendText, ["tab": .string(id), "text": .string(text)]))
+        case "paste":
+            let p = try parse(&ctx, rest)
+            try p.expectPositionals(["tab", "text"], command: "meum tab paste")
+            let id = try resolveTab(ctx, p.positionals[0])
+            let text = p.positionals[1] == "-" ? ctx.env.readStdin() : p.positionals[1]
+            printOK(ctx, try ctx.rpc(MeumMethod.tabPaste, ["tab": .string(id), "text": .string(text)]))
+        case "focused":
+            let p = try parse(&ctx, rest)
+            try p.expectPositionals([], command: "meum tab focused")
+            ctx.show(try ctx.rpc(MeumMethod.tabFocused)) { $0["tab"]?.stringValue }
         case "move":
             let p = try parse(&ctx, rest, values: ["card", "index", "split"])
             try p.expectPositionals(["tab"], command: "meum tab move")

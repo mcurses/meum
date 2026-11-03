@@ -15,8 +15,29 @@ protocol SidebarHost: AnyObject {
     func sidebarSetPinned(_ id: UUID, _ pinned: Bool)
     /// A status entry with a URL was clicked.
     func sidebarStatusClicked(_ id: UUID, key: String)
+    /// A listening port was clicked: open http://localhost:<port>.
+    func sidebarOpenPort(_ port: Int)
     /// The sidebar finished an interaction (rename, menu); the host returns keyboard focus to the terminal.
     func sidebarDidEndInteraction()
+
+    // groups
+    var sidebarGroups: [SidebarGroup] { get }
+    /// A new group from these workspaces; returns its id.
+    func sidebarNewGroup(_ ids: [UUID]) -> UUID?
+    /// Puts the workspaces at the end of a group, or (nil) takes them out of theirs.
+    func sidebarSetGroup(_ ids: [UUID], _ group: UUID?)
+    /// Moves workspaces before `anchor` (nil: the end) into `group` (nil: none).
+    func sidebarMoveWorkspaces(_ ids: [UUID], before anchor: UUID?, group: UUID?)
+    func sidebarMoveGroup(_ id: UUID, before anchor: UUID?)
+    func sidebarRenameGroup(_ id: UUID, to name: String)
+    func sidebarSetGroupCollapsed(_ id: UUID, _ collapsed: Bool)
+    func sidebarUngroup(_ id: UUID)
+}
+
+struct SidebarGroup: Equatable {
+    var id: UUID
+    var name: String
+    var collapsed: Bool
 }
 
 struct SidebarItem: Equatable {
@@ -32,8 +53,43 @@ struct SidebarItem: Equatable {
     var branch: String? = nil
     /// `status.set` entries, in insertion order.
     var status: [SidebarStatus] = []
+    /// The focused tab's folder.
+    var directory: String? = nil
+    /// `workspace.setMeta` labels, by key.
+    var metadata: [String: String] = [:]
+    /// TCP ports the workspace's tab processes listen on.
+    var ports: [Int] = []
+    /// Its sidebar group.
+    var group: UUID? = nil
+}
 
-    var hasSubtitle: Bool { branch != nil || !status.isEmpty }
+/// What a row shows besides the name: the `sidebarShow…` settings.
+struct SidebarDisplay: Equatable {
+    var branch = true
+    var directory = false
+    var status = true
+    var metadata = false
+    var ports = true
+    var agentDots = true
+    var shortcuts = true
+    var pin = true
+
+    init() {}
+    init(_ s: Settings) {
+        branch = s.sidebarShowBranch
+        directory = s.sidebarShowDirectory
+        status = s.sidebarShowStatus
+        metadata = s.sidebarShowMetadata
+        ports = s.sidebarShowPorts
+        agentDots = s.sidebarShowAgentDots
+        shortcuts = s.sidebarShowShortcuts
+        pin = s.sidebarShowPin
+    }
+
+    func hasSubtitle(_ i: SidebarItem) -> Bool {
+        (branch && i.branch != nil) || (directory && i.directory != nil) || (status && !i.status.isEmpty)
+            || (metadata && !i.metadata.isEmpty) || (ports && !i.ports.isEmpty)
+    }
 }
 
 struct SidebarStatus: Equatable {
@@ -49,6 +105,17 @@ struct SidebarStatus: Equatable {
 final class SidebarView: FlippedView, NSTextFieldDelegate, NSViewToolTipOwner {
     weak var host: SidebarHost?
     private(set) var items: [SidebarItem] = []
+    private(set) var groups: [SidebarGroup] = []
+    /// Workspaces selected besides the primary one (the selected workspace): cmd-click toggles, shift-click
+    /// selects a range. Group actions and drags apply to all of them.
+    private(set) var marked: Set<UUID> = []
+    static let groupHeaderHeight: CGFloat = 26
+    private let memberIndent: CGFloat = 10
+
+    /// What the sidebar shows, top to bottom: group headers and workspace rows (indices into groups / items).
+    enum Row: Equatable { case header(Int), workspace(Int) }
+    private(set) var rows: [Row] = []
+    private(set) var frames: [NSRect] = []
     static let headerHeight: CGFloat = 44
     static let expandedRowHeight: CGFloat = 42
     static let collapsedRowHeight: CGFloat = 48
@@ -60,19 +127,30 @@ final class SidebarView: FlippedView, NSTextFieldDelegate, NSViewToolTipOwner {
             guard collapsed != oldValue else { return }
             if collapsed { endEditing(commit: true) }
             hoverIndex = nil
+            layoutRows()
             needsDisplay = true
             updateToolTips()
         }
     }
+    /// What each row shows besides the name.
+    var display = SidebarDisplay() {
+        didSet { if display != oldValue { needsDisplay = true } }
+    }
     private var rowHeight: CGFloat { collapsed ? Self.collapsedRowHeight : Self.expandedRowHeight }
 
+    /// Row indices (`rows`); -1 is the "+" button.
     private var hoverIndex: Int?
     private var pressIndex: Int?
     private var pressPoint: NSPoint = .zero
-    private var dragIndex: Int?
-    private var dropIndex: Int?
+    private var pressFlags: NSEvent.ModifierFlags = []
+
+    enum Dragged: Equatable { case workspaces([UUID]), group(UUID) }
+    enum DropTarget: Equatable { case gap(Int), into(UUID) }
+    private(set) var dragged: Dragged?
+    private(set) var dropTarget: DropTarget?
     private var editor: NSTextField?
     private var editingID: UUID?
+    private var editingGroup = false
     private var trackingArea: NSTrackingArea?
 
     static let palette: [(String, String?)] = [
@@ -86,9 +164,13 @@ final class SidebarView: FlippedView, NSTextFieldDelegate, NSViewToolTipOwner {
 
     func reload() {
         guard let host else { return }
-        let new = host.sidebarItems
-        if new != items {
+        let new = host.sidebarItems, newGroups = host.sidebarGroups
+        if new != items || newGroups != groups {
             items = new
+            groups = newGroups
+            let ids = Set(items.map(\.id))
+            marked = marked.filter { ids.contains($0) && $0 != primaryID }
+            layoutRows()
             needsDisplay = true
             updateToolTips()
         }
@@ -96,48 +178,102 @@ final class SidebarView: FlippedView, NSTextFieldDelegate, NSViewToolTipOwner {
 
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
+        layoutRows()
         needsDisplay = true
         updateToolTips()
     }
+
+    var primaryID: UUID? { items.first { $0.selected }?.id }
+    func isSelected(_ id: UUID) -> Bool { id == primaryID || marked.contains(id) }
+    /// Every selected workspace, in sidebar order.
+    var selectedIDs: [UUID] { items.map(\.id).filter(isSelected) }
+
+    private func group(_ id: UUID?) -> SidebarGroup? { id.flatMap { g in groups.first { $0.id == g } } }
+
+    /// Rows and their frames. The rail (collapsed sidebar) shows every workspace and no headers.
+    private func layoutRows() {
+        rows = []; frames = []
+        var y = Self.headerHeight
+        var current: UUID?
+        let w = bounds.width - inset * 2
+        for (i, it) in items.enumerated() {
+            if !collapsed, let g = it.group, g != current, let gi = groups.firstIndex(where: { $0.id == g }) {
+                rows.append(.header(gi))
+                frames.append(NSRect(x: inset, y: y, width: w, height: Self.groupHeaderHeight - 2))
+                y += Self.groupHeaderHeight
+            }
+            current = it.group
+            if !collapsed, group(it.group)?.collapsed == true { continue }
+            let indent = !collapsed && group(it.group) != nil ? memberIndent : 0
+            rows.append(.workspace(i))
+            frames.append(NSRect(x: inset + indent, y: y, width: w - indent, height: rowHeight - 2))
+            y += rowHeight
+        }
+    }
+
+    /// Member rows of a group, as item indices.
+    private func memberIndices(_ g: UUID) -> [Int] { items.indices.filter { items[$0].group == g } }
 
     /// In the rail every tile shows its workspace's name as a tooltip.
     private func updateToolTips() {
         removeAllToolTips()
         guard collapsed else { return }
-        for i in items.indices { addToolTip(rowRect(i), owner: self, userData: nil) }
+        for f in frames { addToolTip(f, owner: self, userData: nil) }
     }
 
     func view(_ view: NSView, stringForToolTip tag: NSView.ToolTipTag, point: NSPoint,
               userData data: UnsafeMutableRawPointer?) -> String {
-        rowIndex(at: point).map { items[$0].name } ?? ""
+        guard let r = rowIndex(at: point), case .workspace(let i) = rows[r] else { return "" }
+        return items[i].name
     }
 
     // MARK: Geometry
-
-    private func rowRect(_ i: Int) -> NSRect {
-        NSRect(x: inset, y: Self.headerHeight + CGFloat(i) * rowHeight, width: bounds.width - inset * 2,
-               height: rowHeight - 2)
-    }
 
     private var plusRect: NSRect {
         collapsed ? NSRect(x: (bounds.width - 22) / 2, y: 12, width: 22, height: 22)
             : NSRect(x: bounds.width - 34, y: 12, width: 22, height: 22)
     }
 
+    /// The row under a point (its frame plus the 2 pt gap below, full width).
     private func rowIndex(at pt: NSPoint) -> Int? {
-        let i = Int(floor((pt.y - Self.headerHeight) / rowHeight))
-        return (pt.y >= Self.headerHeight && items.indices.contains(i)) ? i : nil
+        frames.firstIndex { pt.y >= $0.minY && pt.y < $0.maxY + 2 }
     }
 
-    private func insertionIndex(at pt: NSPoint) -> Int {
-        let i = Int(((pt.y - Self.headerHeight) / rowHeight).rounded())
-        return min(max(0, i), items.count)
+    /// Where a drag would drop: onto a group header (join it), else the gap between rows nearest the pointer.
+    private func dropTarget(at pt: NSPoint) -> DropTarget {
+        if case .workspaces = dragged, let r = rowIndex(at: pt), case .header(let gi) = rows[r],
+           pt.y > frames[r].minY + 5, pt.y < frames[r].maxY - 5 {
+            return .into(groups[gi].id)
+        }
+        return .gap(frames.firstIndex { pt.y < $0.midY } ?? rows.count)
+    }
+
+    /// A gap as a model move: before which workspace, and into which group. Inside an open group (after its
+    /// header or between two of its members) means into it; anywhere else means no group.
+    private func resolve(gap g: Int, moving: Set<UUID>) -> (anchor: UUID?, group: UUID?) {
+        var anchor: UUID?
+        if g < rows.count {
+            let start: Int
+            switch rows[g] {
+            case .header(let gi): start = memberIndices(groups[gi].id).first ?? items.count
+            case .workspace(let i): start = i
+            }
+            anchor = items[start...].first { !moving.contains($0.id) }?.id
+        }
+        var into: UUID?
+        if g > 0, case .header(let gi) = rows[g - 1], !groups[gi].collapsed {
+            into = groups[gi].id
+        } else if g > 0, g < rows.count, case .workspace(let a) = rows[g - 1], case .workspace(let b) = rows[g],
+                  let ga = items[a].group, items[b].group == ga {
+            into = ga
+        }
+        return (anchor, into)
     }
 
     // MARK: Drawing
 
     override func draw(_ dirtyRect: NSRect) {
-        statusHits = []   // every row is drawn below; drawSubtitle collects the link spans again
+        statusHits = []; portHits = []   // every row is drawn below; drawSubtitle collects the link spans again
         let title: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 11, weight: .bold),
             .foregroundColor: NSColor(white: 1, alpha: 0.45),
@@ -156,34 +292,103 @@ final class SidebarView: FlippedView, NSTextFieldDelegate, NSViewToolTipOwner {
         NSColor(white: 1, alpha: 0.6).setStroke()
         p.stroke()
 
-        // while dragging, draw the order the drop would produce, the dragged row outlined in its new slot
-        var order = Array(items.indices)
-        var draggedSlot: Int?
-        if let d = dragIndex, let drop = dropIndex {
-            let target = drop > d ? drop - 1 : drop
-            order.remove(at: d)
-            order.insert(d, at: min(target, order.count))
-            draggedSlot = order.firstIndex(of: d)
+        let draggedIDs: Set<UUID> = {
+            switch dragged {
+            case .workspaces(let ids): return Set(ids)
+            case .group(let g): return Set(items.filter { $0.group == g }.map(\.id))
+            case nil: return []
+            }
+        }()
+        for (r, row) in rows.enumerated() {
+            let f = frames[r]
+            let hover = dragged == nil && hoverIndex == r
+            switch row {
+            case .header(let gi):
+                drawGroupHeader(groups[gi], in: f, hover: hover,
+                                target: dropTarget == .into(groups[gi].id) || dragged == .group(groups[gi].id))
+            case .workspace(let i):
+                if collapsed {
+                    drawTile(items[i], in: f, hover: hover)
+                } else {
+                    drawRow(items[i], in: f, index: i, hover: hover)
+                }
+                if draggedIDs.contains(items[i].id) {
+                    NSColor(white: 0, alpha: 0.35).setFill()
+                    NSBezierPath(roundedRect: f, xRadius: 7, yRadius: 7).fill()
+                }
+            }
         }
-        for (slot, i) in order.enumerated() {
-            let r = rowRect(slot)
-            if slot == draggedSlot {
-                NSColor.controlAccentColor.withAlphaComponent(0.9).setStroke()
-                let outline = NSBezierPath(roundedRect: r.insetBy(dx: 0.5, dy: 0.5), xRadius: 7, yRadius: 7)
-                outline.lineWidth = 1.5
-                outline.stroke()
-            }
-            if collapsed {
-                drawTile(items[i], in: r, hover: dragIndex == nil && hoverIndex == i)
-            } else {
-                drawRow(items[i], in: r, index: slot, hover: dragIndex == nil && hoverIndex == i)
-            }
+        // the drop position: a line in the gap (indented when it lands in a group)
+        if dragged != nil, case .gap(let g) = dropTarget {
+            let y = g < frames.count ? frames[g].minY - 1 : (frames.last.map { $0.maxY + 1 } ?? Self.headerHeight)
+            let moving = draggedIDs
+            let indent: CGFloat = !collapsed && resolve(gap: g, moving: moving).group != nil && dragged.map({
+                if case .group = $0 { return false } else { return true } }) == true ? memberIndent : 0
+            NSColor.controlAccentColor.setFill()
+            NSBezierPath(roundedRect: NSRect(x: inset + indent, y: y - 1, width: bounds.width - inset * 2 - indent, height: 2.5),
+                         xRadius: 1.25, yRadius: 1.25).fill()
         }
     }
 
-    private func drawRow(_ item: SidebarItem, in r: NSRect, index: Int, hover: Bool, dragging: Bool = false) {
-        if item.selected && !dragging {
+    /// A group's header: chevron, name, member count; folded, also its members' agent dots and the selection.
+    private func drawGroupHeader(_ g: SidebarGroup, in r: NSRect, hover: Bool, target: Bool) {
+        let members = items.filter { $0.group == g.id }
+        let holdsSelection = g.collapsed && members.contains { isSelected($0.id) }
+        if target {
+            NSColor.controlAccentColor.withAlphaComponent(0.35).setFill()
+            NSBezierPath(roundedRect: r, xRadius: 6, yRadius: 6).fill()
+        } else if holdsSelection {
+            NSColor(srgbRed: 0x3D / 255, green: 0x7B / 255, blue: 1, alpha: 0.18).setFill()
+            NSBezierPath(roundedRect: r, xRadius: 6, yRadius: 6).fill()
+        } else if hover {
+            NSColor(white: 1, alpha: 0.06).setFill()
+            NSBezierPath(roundedRect: r, xRadius: 6, yRadius: 6).fill()
+        }
+        // chevron: right when folded, down when open
+        let c = NSPoint(x: r.minX + 12, y: r.midY)
+        let chevron = NSBezierPath()
+        if g.collapsed {
+            chevron.move(to: NSPoint(x: c.x - 2, y: c.y - 4)); chevron.line(to: NSPoint(x: c.x + 2, y: c.y))
+            chevron.line(to: NSPoint(x: c.x - 2, y: c.y + 4))
+        } else {
+            chevron.move(to: NSPoint(x: c.x - 4, y: c.y - 2)); chevron.line(to: NSPoint(x: c.x, y: c.y + 2))
+            chevron.line(to: NSPoint(x: c.x + 4, y: c.y - 2))
+        }
+        chevron.lineWidth = 1.5
+        chevron.lineCapStyle = .round
+        chevron.lineJoinStyle = .round
+        NSColor(white: 1, alpha: 0.5).setStroke()
+        chevron.stroke()
+
+        var right = r.maxX - 8
+        let countAttrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 10, weight: .medium),
+                                                          .foregroundColor: NSColor(white: 1, alpha: 0.3)]
+        let count = "\(members.count)" as NSString
+        let cw = count.size(withAttributes: countAttrs).width
+        count.draw(at: NSPoint(x: right - cw, y: r.midY - 7), withAttributes: countAttrs)
+        right -= cw + 8
+        if g.collapsed, display.agentDots {
+            var sum = WorkspaceAgentSummary()
+            for m in members {
+                sum.liveSessions += m.agents.liveSessions; sum.needsInput += m.agents.needsInput; sum.unread += m.agents.unread
+            }
+            for c in Self.agentDots(sum) { right = drawDot(c, right: right, midY: r.midY, size: 6) }
+        }
+        guard !(editingGroup && editingID == g.id) else { return }
+        let para = NSMutableParagraphStyle()
+        para.lineBreakMode = .byTruncatingTail
+        let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 12, weight: .semibold),
+                                                    .foregroundColor: NSColor(white: 1, alpha: 0.7), .paragraphStyle: para]
+        let x = r.minX + 22
+        (g.name as NSString).draw(in: NSRect(x: x, y: r.midY - 8, width: max(0, right - x - 4), height: 17), withAttributes: attrs)
+    }
+
+    private func drawRow(_ item: SidebarItem, in r: NSRect, index: Int, hover: Bool) {
+        if item.selected {
             NSColor(srgbRed: 0x3D / 255, green: 0x7B / 255, blue: 1, alpha: 0.30).setFill()
+            NSBezierPath(roundedRect: r, xRadius: 7, yRadius: 7).fill()
+        } else if marked.contains(item.id) {
+            NSColor(srgbRed: 0x3D / 255, green: 0x7B / 255, blue: 1, alpha: 0.15).setFill()
             NSBezierPath(roundedRect: r, xRadius: 7, yRadius: 7).fill()
         } else if hover {
             NSColor(white: 1, alpha: 0.06).setFill()
@@ -195,11 +400,12 @@ final class SidebarView: FlippedView, NSTextFieldDelegate, NSViewToolTipOwner {
         NSBezierPath(roundedRect: stripe, xRadius: 1.5, yRadius: 1.5).fill()
 
         // first line: name, agent dots, ⌘N hint; second line (if any): branch and status entries
-        let midY = item.hasSubtitle ? r.minY + 14 : r.midY
-        if item.hasSubtitle, item.id != editingID { drawSubtitle(item, in: r) }
+        let sub = display.hasSubtitle(item)
+        let midY = sub ? r.minY + 14 : r.midY
+        if sub, item.id != editingID { drawSubtitle(item, in: r) }
         // right side: agent dots, then the ⌘N hint
         var right = r.maxX - 8
-        if index < 9 {
+        if display.shortcuts, index < 9 {
             let hint: [NSAttributedString.Key: Any] = [
                 .font: NSFont.systemFont(ofSize: 10, weight: .medium),
                 .foregroundColor: NSColor(white: 1, alpha: item.selected ? 0.45 : 0.25),
@@ -209,18 +415,9 @@ final class SidebarView: FlippedView, NSTextFieldDelegate, NSViewToolTipOwner {
             s.draw(at: NSPoint(x: right - w, y: midY - 7), withAttributes: hint)
             right -= w + 8
         }
-        let a = item.agents
-        if a.anyNeedsInput {
-            right = drawDot(NSColor.systemOrange, right: right, midY: midY)
-        } else if a.anyUnread {
-            right = drawDot(NSColor.systemBlue, right: right, midY: midY)
-        }
-        if a.liveSessions > 0 {
-            for _ in 0..<min(a.liveSessions, 5) {
-                right = drawDot(NSColor(white: 1, alpha: 0.45), right: right, midY: midY, size: 5)
-            }
-        }
-        if item.pinned {
+        // one dot per live Claude session (at most 5): orange waits on you, blue finished unread, grey otherwise
+        for c in display.agentDots ? Self.agentDots(item.agents) : [] { right = drawDot(c, right: right, midY: midY, size: 6) }
+        if display.pin, item.pinned {
             let pin: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 9),
                                                       .foregroundColor: NSColor(white: 1, alpha: 0.4)]
             ("📌" as NSString).draw(at: NSPoint(x: right - 12, y: midY - 6), withAttributes: pin)
@@ -242,6 +439,10 @@ final class SidebarView: FlippedView, NSTextFieldDelegate, NSViewToolTipOwner {
 
     /// The rail's tile: the workspace icon on its colour, the selection behind it, the agent state as a dot.
     private func drawTile(_ item: SidebarItem, in r: NSRect, hover: Bool) {
+        if marked.contains(item.id) {
+            NSColor(srgbRed: 0x3D / 255, green: 0x7B / 255, blue: 1, alpha: 0.15).setFill()
+            NSBezierPath(roundedRect: r, xRadius: 9, yRadius: 9).fill()
+        }
         if item.selected {
             NSColor(srgbRed: 0x3D / 255, green: 0x7B / 255, blue: 1, alpha: 0.30).setFill()
             NSBezierPath(roundedRect: r, xRadius: 9, yRadius: 9).fill()
@@ -258,7 +459,7 @@ final class SidebarView: FlippedView, NSTextFieldDelegate, NSViewToolTipOwner {
                       in: tile, selected: item.selected)
 
         // agent state, top right of the tile: needs input, unread, or a running session
-        let a = item.agents
+        let a = display.agentDots ? item.agents : WorkspaceAgentSummary()
         let dot: NSColor? = a.anyNeedsInput ? .systemOrange : a.anyUnread ? .systemBlue
             : a.liveSessions > 0 ? NSColor(white: 1, alpha: 0.55) : nil
         if let dot {
@@ -303,10 +504,24 @@ final class SidebarView: FlippedView, NSTextFieldDelegate, NSViewToolTipOwner {
         let line = NSMutableAttributedString()
         func add(_ s: String, _ c: NSColor) { line.append(NSAttributedString(string: s, attributes: [.font: font, .foregroundColor: c])) }
         // a long branch must not push the status entries out of the row
-        if let b = item.branch { add("\u{2387} " + (b.count > 22 ? b.prefix(10) + "…" + b.suffix(10) : b), dim) }
+        if display.branch, let b = item.branch { add("\u{2387} " + (b.count > 22 ? b.prefix(10) + "…" + b.suffix(10) : b), dim) }
+        if display.directory, let d = item.directory {
+            if line.length > 0 { add("  ", dim) }
+            add(Self.shortPath(d), dim)
+        }
         let x = r.minX + 16
         let maxX = r.maxX - 8
-        for st in item.status {
+        for port in display.ports ? item.ports : [] {
+            if line.length > 0 { add("  ", dim) }
+            let start = x + line.size().width
+            add(":\(port)", NSColor(white: 1, alpha: item.selected ? 0.85 : 0.7))
+            let n = ":\(port)".utf16.count
+            line.addAttributes([.underlineStyle: NSUnderlineStyle.single.rawValue, .underlineColor: NSColor(white: 1, alpha: 0.3)],
+                               range: NSRange(location: line.length - n, length: n))
+            let end = min(maxX, x + line.size().width)
+            if end > start { portHits.append((NSRect(x: start, y: r.minY + 20, width: end - start, height: 18), port)) }
+        }
+        for st in display.status ? item.status : [] {
             if line.length > 0 { add("  ·  ", NSColor(white: 1, alpha: 0.25)) }
             let start = x + line.size().width
             add(st.key + " ", dim)
@@ -323,10 +538,37 @@ final class SidebarView: FlippedView, NSTextFieldDelegate, NSViewToolTipOwner {
                 }
             }
         }
+        if display.metadata {
+            for (k, v) in item.metadata.sorted(by: { $0.key < $1.key }) {
+                if line.length > 0 { add("  ·  ", NSColor(white: 1, alpha: 0.25)) }
+                add(k + " ", dim)
+                add(v, NSColor(white: 1, alpha: item.selected ? 0.85 : 0.7))
+            }
+        }
         let para = NSMutableParagraphStyle()
         para.lineBreakMode = .byTruncatingTail
         line.addAttribute(.paragraphStyle, value: para, range: NSRange(location: 0, length: line.length))
         line.draw(in: NSRect(x: x, y: r.minY + 22, width: max(0, maxX - x), height: 15))
+    }
+
+    /// A folder for the row: the home folder as `~`, and only the last two parts of a deep path.
+    static func shortPath(_ path: String) -> String {
+        let home = NSHomeDirectory()
+        var p = path
+        if p == home { return "~" }
+        if p.hasPrefix(home + "/") { p = "~" + p.dropFirst(home.count) }
+        let parts = p.split(separator: "/", omittingEmptySubsequences: true)
+        return parts.count > 3 ? "…/" + parts.suffix(2).joined(separator: "/") : p
+    }
+
+    /// The row's agent dots, right to left: one per live session, coloured by its state, at most 5.
+    static func agentDots(_ a: WorkspaceAgentSummary) -> [NSColor] {
+        let waiting = min(a.needsInput, a.liveSessions)
+        let unread = min(a.unread, a.liveSessions - waiting)
+        let rest = a.liveSessions - waiting - unread
+        let all = Array(repeating: NSColor.systemOrange, count: waiting) + Array(repeating: NSColor.systemBlue, count: unread)
+            + Array(repeating: NSColor(white: 1, alpha: 0.45), count: rest)
+        return Array(all.prefix(5))
     }
 
     private func drawDot(_ c: NSColor, right: CGFloat, midY: CGFloat, size: CGFloat = 7) -> CGFloat {
@@ -358,11 +600,16 @@ final class SidebarView: FlippedView, NSTextFieldDelegate, NSViewToolTipOwner {
         let pt = convert(event.locationInWindow, from: nil)
         let h = plusRect.contains(pt) ? -1 : rowIndex(at: pt)
         if h != hoverIndex { hoverIndex = h; needsDisplay = true }
-        (statusHit(at: pt) != nil ? NSCursor.pointingHand : NSCursor.arrow).set()
+        (statusHit(at: pt) != nil || portHit(at: pt) != nil ? NSCursor.pointingHand : NSCursor.arrow).set()
     }
 
     /// Clickable status entries as drawn last: (rect, workspace, key).
     private(set) var statusHits: [(NSRect, UUID, String)] = []
+
+    /// Clickable ports as drawn last: (rect, port).
+    private(set) var portHits: [(NSRect, Int)] = []
+
+    func portHit(at pt: NSPoint) -> Int? { portHits.first { $0.0.contains(pt) }?.1 }
 
     func statusHit(at pt: NSPoint) -> (UUID, String)? {
         statusHits.first { $0.0.contains(pt) }.map { ($0.1, $0.2) }
@@ -376,44 +623,124 @@ final class SidebarView: FlippedView, NSTextFieldDelegate, NSViewToolTipOwner {
         let pt = convert(event.locationInWindow, from: nil)
         if editor != nil { endEditing(commit: true) }
         if plusRect.contains(pt) { host?.sidebarNew(); return }
-        guard let i = rowIndex(at: pt) else { return }
+        guard let r = rowIndex(at: pt) else { return }
         if event.clickCount == 2, !collapsed {
-            beginRename(items[i].id)
+            switch rows[r] {
+            case .header(let gi): beginGroupRename(groups[gi].id)
+            case .workspace(let i): beginRename(items[i].id)
+            }
             return
         }
-        pressIndex = i
+        pressIndex = r
         pressPoint = pt
+        pressFlags = event.modifierFlags.intersection([.shift, .command])
     }
 
     override func mouseDragged(with event: NSEvent) {
         guard let p = pressIndex else { return }
         let pt = convert(event.locationInWindow, from: nil)
-        if dragIndex == nil, hypot(pt.x - pressPoint.x, pt.y - pressPoint.y) > 4 { dragIndex = p }
-        guard dragIndex != nil else { return }
-        dropIndex = insertionIndex(at: pt)
+        if dragged == nil, hypot(pt.x - pressPoint.x, pt.y - pressPoint.y) > 4 {
+            switch rows[p] {
+            case .header(let gi): dragged = .group(groups[gi].id)
+            case .workspace(let i):
+                let id = items[i].id
+                dragged = .workspaces(isSelected(id) ? selectedIDs : [id])
+            }
+        }
+        guard dragged != nil else { return }
+        dropTarget = dropTarget(at: pt)
         needsDisplay = true
     }
 
     override func mouseUp(with event: NSEvent) {
-        defer { pressIndex = nil; dragIndex = nil; dropIndex = nil; needsDisplay = true }
-        if let d = dragIndex, let drop = dropIndex {
-            let target = drop > d ? drop - 1 : drop
-            if target != d { host?.sidebarMove(items[d].id, to: target) }
+        defer { pressIndex = nil; dragged = nil; dropTarget = nil; needsDisplay = true }
+        if let d = dragged, let t = dropTarget {
+            finishDrag(d, t)
             return
         }
+        guard let p = pressIndex else { return }
         let pt = convert(event.locationInWindow, from: nil)
-        if pressIndex != nil, !collapsed, let (id, key) = statusHit(at: pt) {
-            host?.sidebarStatusClicked(id, key: key)
+        switch rows[p] {
+        case .header(let gi):
+            host?.sidebarSetGroupCollapsed(groups[gi].id, !groups[gi].collapsed)
+        case .workspace(let i):
+            if pressFlags.isEmpty, !collapsed, let port = portHit(at: pt) {
+                host?.sidebarOpenPort(port)
+                return
+            }
+            if pressFlags.isEmpty, !collapsed, let (id, key) = statusHit(at: pt) {
+                host?.sidebarStatusClicked(id, key: key)
+                return
+            }
+            click(items[i].id, flags: pressFlags)
+        }
+    }
+
+    /// Selection: a plain click selects one workspace; cmd-click adds or removes one, shift-click selects the range
+    /// from the selected workspace. The clicked one becomes the selected (primary) workspace.
+    func click(_ id: UUID, flags: NSEvent.ModifierFlags) {
+        let primary = primaryID
+        if flags.contains(.command) {
+            if id == primary {
+                // unselect the primary: the nearest other selected one takes over
+                guard !marked.isEmpty, let i = items.firstIndex(where: { $0.id == id }) else { return }
+                let next = items.indices.filter { marked.contains(items[$0].id) }.min { abs($0 - i) < abs($1 - i) }!
+                marked.remove(items[next].id)
+                host?.sidebarSelect(items[next].id)
+            } else if marked.contains(id) {
+                marked.remove(id)
+                needsDisplay = true
+            } else {
+                if let primary { marked.insert(primary) }
+                host?.sidebarSelect(id)
+            }
             return
         }
-        if let p = pressIndex { host?.sidebarSelect(items[p].id) }
+        if flags.contains(.shift), let primary {
+            let visible: [UUID] = rows.compactMap { if case .workspace(let i) = $0 { return items[i].id } else { return nil } }
+            if let a = visible.firstIndex(of: primary), let b = visible.firstIndex(of: id) {
+                marked = Set(visible[min(a, b)...max(a, b)]).subtracting([id])
+                host?.sidebarSelect(id)
+                needsDisplay = true
+                return
+            }
+        }
+        marked = []
+        needsDisplay = true
+        host?.sidebarSelect(id)
+    }
+
+    private func finishDrag(_ d: Dragged, _ t: DropTarget) {
+        switch (d, t) {
+        case (.workspaces(let ids), .into(let g)):
+            host?.sidebarSetGroup(ids, g)
+        case (.workspaces(let ids), .gap(let gap)):
+            let (anchor, into) = resolve(gap: gap, moving: Set(ids))
+            host?.sidebarMoveWorkspaces(ids, before: anchor, group: into)
+        case (.group(let g), .gap(let gap)):
+            let (anchor, _) = resolve(gap: gap, moving: Set(items.filter { $0.group == g }.map(\.id)))
+            host?.sidebarMoveGroup(g, before: anchor)
+        case (.group, .into):
+            break
+        }
     }
 
     override func menu(for event: NSEvent) -> NSMenu? {
         let pt = convert(event.locationInWindow, from: nil)
-        guard let i = rowIndex(at: pt) else { return nil }
-        let item = items[i]
+        guard let r = rowIndex(at: pt) else { return nil }
         let m = NSMenu()
+        if case .header(let gi) = rows[r] {
+            let g = groups[gi]
+            m.addItem(withTitle: "Rename Group…", action: #selector(menuRenameGroup(_:)), keyEquivalent: "").representedObject = g.id
+            m.addItem(withTitle: g.collapsed ? "Expand" : "Collapse", action: #selector(menuToggleGroup(_:)), keyEquivalent: "")
+                .representedObject = g.id
+            m.addItem(.separator())
+            m.addItem(withTitle: "Ungroup", action: #selector(menuUngroup(_:)), keyEquivalent: "").representedObject = g.id
+            for mi in m.items where mi.action != nil { mi.target = self }
+            return m
+        }
+        guard case .workspace(let i) = rows[r] else { return nil }
+        let item = items[i]
         if collapsed {
             let title = NSMenuItem(title: item.name, action: nil, keyEquivalent: "")
             title.isEnabled = false
@@ -435,11 +762,61 @@ final class SidebarView: FlippedView, NSTextFieldDelegate, NSViewToolTipOwner {
         m.addItem(cm)
         m.addItem(withTitle: item.pinned ? "Unpin" : "Pin", action: #selector(menuPin(_:)), keyEquivalent: "")
             .representedObject = item.id
+
+        // groups: for the whole selection when the clicked row is part of it
+        let targets = isSelected(item.id) ? selectedIDs : [item.id]
+        m.addItem(.separator())
+        m.addItem(withTitle: targets.count > 1 ? "New Group from \(targets.count) Workspaces" : "New Group",
+                  action: #selector(menuNewGroup(_:)), keyEquivalent: "").representedObject = targets
+        let theirGroups = Set(targets.map { id in items.first { $0.id == id }?.group })
+        let others = groups.filter { !(theirGroups.count == 1 && theirGroups.first == $0.id) }
+        if !others.isEmpty {
+            let sub = NSMenu()
+            for g in others {
+                let mi = NSMenuItem(title: g.name, action: #selector(menuMoveToGroup(_:)), keyEquivalent: "")
+                mi.representedObject = [targets, g.id] as [Any]
+                mi.target = self
+                sub.addItem(mi)
+            }
+            let mg = NSMenuItem(title: "Move to Group", action: nil, keyEquivalent: "")
+            mg.submenu = sub
+            m.addItem(mg)
+        }
+        if theirGroups.contains(where: { $0 != nil }) {
+            m.addItem(withTitle: "Remove from Group", action: #selector(menuRemoveFromGroup(_:)), keyEquivalent: "")
+                .representedObject = targets
+        }
         m.addItem(.separator())
         m.addItem(withTitle: "Close Workspace", action: #selector(menuClose(_:)), keyEquivalent: "")
             .representedObject = item.id
         for mi in m.items where mi.action != nil { mi.target = self }
         return m
+    }
+
+    @objc private func menuNewGroup(_ s: NSMenuItem) {
+        guard let ids = s.representedObject as? [UUID], let g = host?.sidebarNewGroup(ids) else { return }
+        marked = []
+        reload()
+        if collapsed { host?.sidebarDidEndInteraction() } else { beginGroupRename(g) }
+    }
+    @objc private func menuMoveToGroup(_ s: NSMenuItem) {
+        guard let pair = s.representedObject as? [Any], let ids = pair[0] as? [UUID], let g = pair[1] as? UUID else { return }
+        host?.sidebarSetGroup(ids, g)
+        host?.sidebarDidEndInteraction()
+    }
+    @objc private func menuRemoveFromGroup(_ s: NSMenuItem) {
+        if let ids = s.representedObject as? [UUID] { host?.sidebarSetGroup(ids, nil) }
+        host?.sidebarDidEndInteraction()
+    }
+    @objc private func menuRenameGroup(_ s: NSMenuItem) { if let id = s.representedObject as? UUID { beginGroupRename(id) } }
+    @objc private func menuToggleGroup(_ s: NSMenuItem) {
+        guard let id = s.representedObject as? UUID, let g = groups.first(where: { $0.id == id }) else { return }
+        host?.sidebarSetGroupCollapsed(id, !g.collapsed)
+        host?.sidebarDidEndInteraction()
+    }
+    @objc private func menuUngroup(_ s: NSMenuItem) {
+        if let id = s.representedObject as? UUID { host?.sidebarUngroup(id) }
+        host?.sidebarDidEndInteraction()
     }
 
     static func swatch(_ c: NSColor) -> NSImage {
@@ -468,10 +845,22 @@ final class SidebarView: FlippedView, NSTextFieldDelegate, NSViewToolTipOwner {
 
     func beginRename(_ id: UUID) {
         guard !collapsed, let i = items.firstIndex(where: { $0.id == id }) else { return }
+        // a member of a folded group: unfold it first
+        if let g = group(items[i].group), g.collapsed { host?.sidebarSetGroupCollapsed(g.id, false); reload() }
+        guard let r = rows.firstIndex(of: .workspace(i)).map({ frames[$0] }) else { return }
+        openEditor(in: r, text: items[i].name, id: id, group: false)
+    }
+
+    func beginGroupRename(_ id: UUID) {
+        guard !collapsed, let gi = groups.firstIndex(where: { $0.id == id }),
+              let r = rows.firstIndex(of: .header(gi)).map({ frames[$0] }) else { return }
+        openEditor(in: r, text: groups[gi].name, id: id, group: true)
+    }
+
+    private func openEditor(in r: NSRect, text: String, id: UUID, group: Bool) {
         endEditing(commit: false)
-        let r = rowRect(i)
-        let f = NSTextField(frame: NSRect(x: r.minX + 12, y: r.midY - 11, width: r.width - 50, height: 22))
-        f.stringValue = items[i].name
+        let f = NSTextField(frame: NSRect(x: r.minX + (group ? 18 : 12), y: r.midY - 11, width: r.width - 50, height: 22))
+        f.stringValue = text
         f.font = .systemFont(ofSize: 13)
         f.focusRingType = .none
         f.bezelStyle = .roundedBezel
@@ -481,6 +870,7 @@ final class SidebarView: FlippedView, NSTextFieldDelegate, NSViewToolTipOwner {
         addSubview(f)
         editor = f
         editingID = id
+        editingGroup = group
         needsDisplay = true
         window?.makeFirstResponder(f)
         f.currentEditor()?.selectAll(nil)
@@ -504,7 +894,8 @@ final class SidebarView: FlippedView, NSTextFieldDelegate, NSViewToolTipOwner {
         editingID = nil
         let name = f.stringValue
         f.removeFromSuperview()
-        if commit { host?.sidebarRename(id, to: name) }
+        if commit { if editingGroup { host?.sidebarRenameGroup(id, to: name) } else { host?.sidebarRename(id, to: name) } }
+        editingGroup = false
         needsDisplay = true
         host?.sidebarDidEndInteraction()
     }

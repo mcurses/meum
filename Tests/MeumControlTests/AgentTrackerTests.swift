@@ -67,7 +67,7 @@ final class AgentTrackerTests: XCTestCase {
     }
 
     func testNotificationNeedsInput() {
-        for kind in ["permission_prompt", "idle_prompt", "elicitation_dialog"] {
+        for kind in ["permission_prompt", "elicitation_dialog"] {
             var t = AgentTracker()
             t.apply(tab: tab, configDir: nil, payload: hook("SessionStart"), at: at(0))
             t.apply(tab: tab, configDir: nil, payload: hook("UserPromptSubmit"), at: at(1))
@@ -79,6 +79,19 @@ final class AgentTrackerTests: XCTestCase {
         t.apply(tab: tab, configDir: nil, payload: hook("SessionStart"), at: at(0))
         XCTAssertEqual(t.apply(tab: tab, configDir: nil, payload: hook("Notification", extra: ["notification_type": "auth_success"]), at: at(1)), .ignored)
         XCTAssertEqual(t.state(of: tab)?.phase, .idle)
+    }
+
+    /// Claude Code sends `idle_prompt` 60 s after every finished turn: a read, finished session must stay idle and read.
+    func testIdlePromptAfterAFinishedTurnChangesNothing() {
+        var t = AgentTracker()
+        t.apply(tab: tab, configDir: nil, payload: hook("SessionStart"), at: at(0))
+        t.apply(tab: tab, configDir: nil, payload: hook("UserPromptSubmit"), at: at(1))
+        t.apply(tab: tab, configDir: nil, payload: hook("Stop", extra: ["prompt_id": "p"]), at: at(2))
+        t.markRead(tab: tab, at: at(3))
+        XCTAssertEqual(t.apply(tab: tab, configDir: nil, payload: hook("Notification", extra: ["notification_type": "idle_prompt", "message": "waiting"]), at: at(63)), .ignored)
+        XCTAssertEqual(t.state(of: tab)?.phase, .idle)
+        XCTAssertEqual(t.state(of: tab)?.unread, false)
+        XCTAssertEqual(t.summary(tabs: [tab]), WorkspaceSummary(live: 1))
     }
 
     func testNewPromptAfterNeedsInputRunsAgainAndClearsUnread() {
@@ -163,8 +176,8 @@ final class AgentTrackerTests: XCTestCase {
         t.apply(tab: "d", configDir: nil, payload: hook("Notification", sid: "sd", extra: ["notification_type": "permission_prompt"]), at: at(12))
 
         XCTAssertEqual(t.summary(tabs: ["a", "b"]), WorkspaceSummary(live: 2, running: 1, anyUnread: false, anyNeedsInput: false))
-        XCTAssertEqual(t.summary(tabs: ["c"]), WorkspaceSummary(live: 1, running: 0, anyUnread: true, anyNeedsInput: false))
-        XCTAssertEqual(t.summary(tabs: ["a", "b", "c", "d", "ghost"]), WorkspaceSummary(live: 4, running: 1, anyUnread: true, anyNeedsInput: true))
+        XCTAssertEqual(t.summary(tabs: ["c"]), WorkspaceSummary(live: 1, running: 0, anyUnread: true, anyNeedsInput: false, unread: 1))
+        XCTAssertEqual(t.summary(tabs: ["a", "b", "c", "d", "ghost"]), WorkspaceSummary(live: 4, running: 1, anyUnread: true, anyNeedsInput: true, needsInput: 1, unread: 1))
         XCTAssertEqual(t.summary(tabs: ["ghost"]), WorkspaceSummary())
 
         XCTAssertEqual(Set(t.markRead(tabs: ["a", "b", "c", "d"], at: at(20))), ["c", "d"])

@@ -170,6 +170,14 @@ final class CLITests: XCTestCase {
         XCTAssertNil(lastCall?.params["tab"])
     }
 
+    func testTabPasteAndFocused() throws {
+        XCTAssertEqual(meum(["tab", "paste", FakeHandler.tab1, "line one\nline two"]).code, 0)
+        XCTAssertEqual(lastCall?.method, "tab.paste")
+        XCTAssertEqual(lastCall?.params, ["tab": .string(FakeHandler.tab1), "text": "line one\nline two"])
+        _ = meum(["tab", "focused"])
+        XCTAssertEqual(lastCall?.method, "tab.focused")
+    }
+
     func testCallPassesRawParams() throws {
         let r = meum(["call", "echo", #"{"x":[1,2]}"#])
         XCTAssertEqual(r.out, #"{"x":[1,2]}"#)

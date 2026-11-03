@@ -6,6 +6,8 @@
 #   3. notarize the app and staple the ticket to it
 #   4. put it in a DMG (with an /Applications link), sign, notarize and staple the DMG
 # Output: build/release/meum-<version>-<arch>.dmg (and the stapled build/release/meum.app).
+# --publish creates the GitHub release v<version> with the DMG (what running copies update from); --notes FILE
+# gives its text, else GitHub generates it from the commits.
 #
 # Usage: scripts/release.sh <version>          e.g. scripts/release.sh 0.2.0
 #   MEUM_RELEASE_IDENTITY   signing identity (default: the "Developer ID Application" in the keychain)
@@ -16,7 +18,23 @@
 # different signer to macOS, so installing it over a local build asks for privacy grants again (once).
 set -eu
 
-VERSION="${1:?usage: scripts/release.sh <version>}"
+VERSION="${1:?usage: scripts/release.sh <version> [--publish [--notes FILE]]}"
+shift
+PUBLISH=0
+NOTES=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --publish) PUBLISH=1 ;;
+    --notes) NOTES="${2:?--notes needs a file}"; shift ;;
+    *) echo "release: unknown option $1" >&2; exit 2 ;;
+  esac
+  shift
+done
+if [ "$PUBLISH" = 1 ]; then
+  # refuse early, before minutes of notarizing: a release must come from a clean, pushed main
+  [ -z "$(git -C "$(dirname "$0")/.." status --porcelain)" ] || { echo "release: the working tree is not clean" >&2; exit 1; }
+  if gh release view "v$VERSION" -R mcurses/meum >/dev/null 2>&1; then echo "release: v$VERSION already exists" >&2; exit 1; fi
+fi
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$ROOT/build/release"
 PROFILE="${MEUM_NOTARY_PROFILE:-meum}"
@@ -84,3 +102,14 @@ xcrun stapler staple "$DMG"
 spctl --assess --type execute -vv "$APP" 2>&1 | sed 's/^/release: /'
 spctl --assess --type open --context context:primary-signature -vv "$DMG" 2>&1 | sed 's/^/release: /'
 log "done: $DMG ($ARCH only)"
+log "Homebrew cask: version \"$VERSION\", sha256 \"$(shasum -a 256 "$DMG" | cut -d' ' -f1)\""
+
+if [ "$PUBLISH" = 1 ]; then
+  # the in-app updater reads GitHub's latest release and takes its "-<arch>.dmg" asset
+  log "publishing v$VERSION on github.com/mcurses/meum"
+  if [ -n "$NOTES" ]; then
+    gh release create "v$VERSION" "$DMG" -R mcurses/meum --target "$(git -C "$ROOT" rev-parse HEAD)" --title "meum $VERSION" --notes-file "$NOTES"
+  else
+    gh release create "v$VERSION" "$DMG" -R mcurses/meum --target "$(git -C "$ROOT" rev-parse HEAD)" --title "meum $VERSION" --generate-notes
+  fi
+fi

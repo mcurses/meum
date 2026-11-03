@@ -97,6 +97,8 @@ final class FakeHandler: ControlHandler, @unchecked Sendable {
             return [["id": .string(Self.wsA), "name": "api", "selected": true], ["id": .string(Self.wsB), "name": "web"]]
         case "workspace.new": return ["id": "33333333-cccc-4ccc-8ccc-cccccccccccc"]
         case "tab.new": return ["id": "44444444-dddd-4ddd-8ddd-dddddddddddd"]
+        case "tab.paste": return ["tab": params["tab"] ?? .null]
+        case "tab.focused": return ["workspace": .string(Self.wsA), "tab": .string(Self.tab1), "widget": .null]
         case "workspace.select", "workspace.rename", "workspace.close", "tab.select", "tab.close", "tab.sendText",
              "status.set", "status.clear", "notify", "workspace.markRead", "tab.move", "split.resize":
             return .null

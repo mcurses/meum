@@ -5,9 +5,13 @@
 //
 // Keys and value types (ranges are enforced; out-of-range numbers are an error, not clamped):
 //   cardGap 0…48, cornerRadius 0…32, sidebarWidth 160…480, widgetHeight 40…800 | "auto",
-//   background "glass"|"vibrancy"|"solid", glassBlur 0…40, glassTint 0…1, solidColor "#rrggbb",
+//   background "glass"(="tint")|"vibrancy"|"liquid"|"solid", wallpaper bool (the pinned wallpaper under the material),
+//   liquidStyle "regular"|"clear", focusFrameSaturation 0…1 (focused card frame: 1 workspace colour, 0 grey),
+//   focusFrameOpacity 0…1, glassBlur 0…40, glassTint 0…1, solidColor "#rrggbb",
 //   fontFamily string|null, fontSize 6…48, ghosttyConfigPath string|null, gapsCatchClicks bool,
-//   reattachSessions bool, resumeClaude bool, sidebarCollapsed bool,
+//   reattachSessions bool, resumeClaude bool, sidebarCollapsed bool, checkUpdates bool (daily release check),
+//   sidebarShowBranch, sidebarShowDirectory, sidebarShowStatus, sidebarShowMetadata, sidebarShowPorts, sidebarShowAgentDots,
+//   sidebarShowShortcuts, sidebarShowPin bool   what a sidebar row shows besides the name
 //   widgetOrder [widget id…]   top to bottom within each group (workspace widgets above global ones)
 //   widgetCatalogURL "https://…"   the widget library's catalog.json (null restores the default)
 //   widgetTeamIDs [Team ID…]   Developer ID teams whose signed widgets load without a pinned hash
@@ -21,14 +25,17 @@ import MeumCore
 
 public enum SettingsJSON {
     public static let keys: [String] = [
-        "cardGap", "cornerRadius", "sidebarWidth", "sidebarCollapsed", "widgetHeight", "widgetOrder", "widgetCatalogURL", "widgetTeamIDs", "widgetDeveloperMode", "background", "glassBlur", "glassTint",
+        "cardGap", "cornerRadius", "sidebarWidth", "sidebarCollapsed", "widgetHeight", "widgetOrder", "widgetCatalogURL", "widgetTeamIDs", "widgetDeveloperMode", "background", "wallpaper", "liquidStyle", "focusFrameSaturation", "focusFrameOpacity", "glassBlur", "glassTint",
         "solidColor", "fontFamily", "fontSize", "ghosttyConfigPath", "gapsCatchClicks", "reattachSessions",
-        "resumeClaude", "shortcuts",
-    ]
+        "resumeClaude", "shortcuts", "checkUpdates",
+    ] + sidebarShowKeys
+
+    /// The sidebar row's show/hide switches.
+    public static let sidebarShowKeys: [String] = ["sidebarShowBranch", "sidebarShowDirectory", "sidebarShowStatus", "sidebarShowMetadata", "sidebarShowPorts", "sidebarShowAgentDots", "sidebarShowShortcuts", "sidebarShowPin"]
 
     static let ranges: [String: ClosedRange<Double>] = [
         "cardGap": 0...48, "cornerRadius": 0...32, "sidebarWidth": 160...480, "widgetHeight": 40...800,
-        "glassBlur": 0...40, "glassTint": 0...1, "fontSize": 6...48,
+        "glassBlur": 0...40, "glassTint": 0...1, "focusFrameSaturation": 0...1, "focusFrameOpacity": 0...1, "fontSize": 6...48,
     ]
 
     static func num(_ d: Double) -> JSON { d == d.rounded() && abs(d) < 1e9 ? .int(Int(d)) : .double(d) }
@@ -46,6 +53,10 @@ public enum SettingsJSON {
         case "widgetTeamIDs": return .array(s.widgetTeamIDs.map { .string($0) })
         case "widgetDeveloperMode": return .bool(s.widgetDeveloperMode)
         case "background": return .string(s.background.rawValue)
+        case "wallpaper": return .bool(s.wallpaper)
+        case "focusFrameSaturation": return num(s.focusFrameSaturation)
+        case "focusFrameOpacity": return num(s.focusFrameOpacity)
+        case "liquidStyle": return .string(s.liquidStyle.rawValue)
         case "glassBlur": return num(s.glassBlur)
         case "glassTint": return num(s.glassTint)
         case "solidColor": return .string(s.solidColor)
@@ -55,6 +66,15 @@ public enum SettingsJSON {
         case "gapsCatchClicks": return .bool(s.gapsCatchClicks)
         case "reattachSessions": return .bool(s.reattachSessions)
         case "resumeClaude": return .bool(s.resumeClaude)
+        case "checkUpdates": return .bool(s.checkUpdates)
+        case "sidebarShowBranch": return .bool(s.sidebarShowBranch)
+        case "sidebarShowDirectory": return .bool(s.sidebarShowDirectory)
+        case "sidebarShowStatus": return .bool(s.sidebarShowStatus)
+        case "sidebarShowMetadata": return .bool(s.sidebarShowMetadata)
+        case "sidebarShowPorts": return .bool(s.sidebarShowPorts)
+        case "sidebarShowAgentDots": return .bool(s.sidebarShowAgentDots)
+        case "sidebarShowShortcuts": return .bool(s.sidebarShowShortcuts)
+        case "sidebarShowPin": return .bool(s.sidebarShowPin)
         case "shortcuts":
             return .object(Dictionary(uniqueKeysWithValues: Shortcuts.actions.map { a in
                 (a.id, Shortcuts.combo(a.id, in: s).map { .string($0.text) } ?? .null)
@@ -125,10 +145,19 @@ public enum SettingsJSON {
             s.widgetTeamIDs = ids
         case "widgetDeveloperMode": s.widgetDeveloperMode = try bool()
         case "background":
-            guard let b = v.stringValue.flatMap({ Settings.Background(rawValue: $0.lowercased()) }) else {
-                throw ControlError.invalidParams("'background' must be one of glass, vibrancy, solid")
+            let raw = v.stringValue?.lowercased() == "tint" ? "glass" : v.stringValue?.lowercased()
+            guard let b = raw.flatMap({ Settings.Background(rawValue: $0) }) else {
+                throw ControlError.invalidParams("'background' must be one of glass (tint), vibrancy, liquid, solid")
             }
             s.background = b
+        case "wallpaper": s.wallpaper = try bool()
+        case "focusFrameSaturation": s.focusFrameSaturation = try number()
+        case "focusFrameOpacity": s.focusFrameOpacity = try number()
+        case "liquidStyle":
+            guard let st = v.stringValue.flatMap({ Settings.LiquidStyle(rawValue: $0.lowercased()) }) else {
+                throw ControlError.invalidParams("'liquidStyle' must be regular or clear")
+            }
+            s.liquidStyle = st
         case "glassBlur": s.glassBlur = try number()
         case "glassTint": s.glassTint = try number()
         case "solidColor":
@@ -145,6 +174,15 @@ public enum SettingsJSON {
         case "sidebarCollapsed": s.sidebarCollapsed = try bool()
         case "reattachSessions": s.reattachSessions = try bool()
         case "resumeClaude": s.resumeClaude = try bool()
+        case "checkUpdates": s.checkUpdates = try bool()
+        case "sidebarShowBranch": s.sidebarShowBranch = try bool()
+        case "sidebarShowDirectory": s.sidebarShowDirectory = try bool()
+        case "sidebarShowStatus": s.sidebarShowStatus = try bool()
+        case "sidebarShowMetadata": s.sidebarShowMetadata = try bool()
+        case "sidebarShowPorts": s.sidebarShowPorts = try bool()
+        case "sidebarShowAgentDots": s.sidebarShowAgentDots = try bool()
+        case "sidebarShowShortcuts": s.sidebarShowShortcuts = try bool()
+        case "sidebarShowPin": s.sidebarShowPin = try bool()
         case "shortcuts":
             guard let o = v.objectValue else { throw ControlError.invalidParams("'shortcuts' needs an object {actionID: combination}") }
             for (id, c) in o { try setShortcut(&s, id: id, value: c) }

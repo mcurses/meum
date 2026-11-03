@@ -9,6 +9,7 @@ import MeumCore
 ///   --widgets-dir DIR  / MEUM_WIDGETS_DIR  native widgets (default ~/.local/share/meum/widgets)
 ///   --autoquit SECONDS / MEUM_AUTOQUIT     quit after N seconds (test runs)
 ///   --frame x,y,w,h    / MEUM_FRAME        container frame in AppKit screen coords instead of the visible frame
+///   --update-feed URL  / MEUM_UPDATE_FEED  release feed instead of GitHub's latest meum release (tests)
 ///   ZMX_DIR                               passed through to zmx (an isolated socket dir for tests)
 struct AppOptions {
     var stateDir: URL
@@ -19,6 +20,12 @@ struct AppOptions {
     var frame: CGRect?
     /// `MEUM_DEBUG_RESUME=1`: resume via EchoResumeProvider (prints instead of starting claude).
     var debugResume = false
+    var updateFeed: URL?
+    /// The `MEUM_*` variables meum was started with (they are scrubbed from its own environment right after
+    /// parsing): a relaunch after an update passes them on, so an isolated instance comes back isolated.
+    var launchEnv: [String: String] = [:]
+    /// Started with its own state dir (a test instance), not the user's.
+    var isolated = false
 
     static func parse(arguments: [String] = CommandLine.arguments,
                       env: [String: String] = ProcessInfo.processInfo.environment) -> AppOptions {
@@ -42,6 +49,9 @@ struct AppOptions {
                           widgetsDir: value("--widgets-dir", "MEUM_WIDGETS_DIR").map { URL(fileURLWithPath: $0, isDirectory: true) },
                           autoquit: value("--autoquit", "MEUM_AUTOQUIT").flatMap(Double.init),
                           frame: frame,
-                          debugResume: env["MEUM_DEBUG_RESUME"] == "1")
+                          debugResume: env["MEUM_DEBUG_RESUME"] == "1",
+                          updateFeed: value("--update-feed", "MEUM_UPDATE_FEED").flatMap(URL.init(string:)),
+                          launchEnv: env.filter { $0.key.hasPrefix("MEUM_") },
+                          isolated: value("--state-dir", "MEUM_STATE_DIR") != nil)
     }
 }

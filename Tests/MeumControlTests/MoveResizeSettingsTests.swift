@@ -193,4 +193,38 @@ final class MoveResizeSettingsCLITests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(Settings.self, from: data).widgetOrder, ["a", "b"])
         XCTAssertEqual(try JSONDecoder().decode(Settings.self, from: Data("{}".utf8)).widgetOrder, [])
     }
+
+    func testBackgroundMaterialAndPinnedWallpaper() throws {
+        var s = Settings()
+        XCTAssertEqual(SettingsJSON.value(s, "background"), "glass")
+        XCTAssertEqual(SettingsJSON.value(s, "wallpaper"), true)
+        try SettingsJSON.set(&s, key: "background", value: "liquid")
+        try SettingsJSON.set(&s, key: "liquidStyle", value: "clear")
+        try SettingsJSON.set(&s, key: "wallpaper", value: false)
+        XCTAssertEqual(s.background, .liquid)
+        XCTAssertEqual(s.liquidStyle, .clear)
+        XCTAssertFalse(s.wallpaper)
+        try SettingsJSON.set(&s, key: "background", value: "tint")
+        XCTAssertEqual(s.background, .glass, "tint is the UI name of glass")
+        XCTAssertThrowsError(try SettingsJSON.set(&s, key: "liquidStyle", value: "foggy"))
+        // files from before the switch keep their look: the wallpaper came only with glass
+        let old = { (bg: String) in try JSONDecoder().decode(Settings.self, from: Data(#"{"background":"\#(bg)"}"#.utf8)) }
+        XCTAssertTrue(try old("glass").wallpaper)
+        XCTAssertFalse(try old("vibrancy").wallpaper)
+        XCTAssertEqual(try old("vibrancy").liquidStyle, .regular)
+        let round = try JSONDecoder().decode(Settings.self, from: JSONEncoder().encode(s))
+        XCTAssertEqual(round, s)
+    }
+
+    func testFocusFrameSettings() throws {
+        var s = Settings()
+        XCTAssertEqual(SettingsJSON.value(s, "focusFrameSaturation"), 1)
+        XCTAssertEqual(SettingsJSON.value(s, "focusFrameOpacity"), .double(0.8))
+        try SettingsJSON.set(&s, key: "focusFrameSaturation", value: 0.25)
+        try SettingsJSON.set(&s, key: "focusFrameOpacity", value: 0.4)
+        XCTAssertEqual(s.focusFrameSaturation, 0.25)
+        XCTAssertEqual(s.focusFrameOpacity, 0.4)
+        XCTAssertThrowsError(try SettingsJSON.set(&s, key: "focusFrameSaturation", value: 1.5))
+        XCTAssertEqual(try JSONDecoder().decode(Settings.self, from: Data("{}".utf8)).focusFrameSaturation, 1)
+    }
 }

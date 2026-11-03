@@ -323,7 +323,7 @@ final class ServerIntegrationTests: XCTestCase {
         // A needs-input notification, then the session ends.
         XCTAssertEqual(fire(event("Notification", #","notification_type":"permission_prompt","message":"Claude needs your permission""#), env: hookEnv()).status, 0)
         XCTAssertEqual(try stream.next()?.data["agent"]?["phase"], "needsInput")
-        XCTAssertEqual(h.agents.summary(tabs: [tab]), WorkspaceSummary(live: 1, running: 0, anyUnread: true, anyNeedsInput: true))
+        XCTAssertEqual(h.agents.summary(tabs: [tab]), WorkspaceSummary(live: 1, running: 0, anyUnread: true, anyNeedsInput: true, needsInput: 1))
         XCTAssertEqual(fire(event("SessionEnd", #","reason":"other""#), env: hookEnv()).status, 0)
         XCTAssertEqual(try stream.next()?.data["agent"], JSON.null)
         XCTAssertNil(h.agents.state(of: tab))

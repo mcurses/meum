@@ -21,6 +21,8 @@ final class MainMenu: NSObject {
         app.addItem(withTitle: "About \(Product.name)", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)),
                     keyEquivalent: "")
         app.addItem(.separator())
+        let upd = app.addItem(withTitle: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "")
+        upd.target = self
         item(app, "Settings…", "settings", #selector(openSettings))
         app.addItem(.separator())
         app.addItem(withTitle: "Hide \(Product.name)", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
@@ -137,6 +139,8 @@ final class MainMenu: NSObject {
 
     /// Opens the settings window (set by the app delegate).
     var onSettings: (() -> Void)?
+    var onCheckForUpdates: (() -> Void)?
+    @objc func checkForUpdates() { onCheckForUpdates?() }
     @objc func openSettings() { onSettings?() }
     @objc func newWorkspace() { controller.newWorkspace() }
     @objc func toggleSidebar() { controller.setSidebarCollapsed(!controller.settings.sidebarCollapsed) }

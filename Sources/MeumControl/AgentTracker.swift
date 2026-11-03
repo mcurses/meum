@@ -46,12 +46,19 @@ public struct WorkspaceSummary: Codable, Equatable, Sendable {
     public var running: Int
     public var anyUnread: Bool
     public var anyNeedsInput: Bool
+    /// Sessions waiting on the user (permission prompt or question).
+    public var needsInput: Int
+    /// Sessions with an unread finished turn that are not waiting on the user.
+    public var unread: Int
 
-    public init(live: Int = 0, running: Int = 0, anyUnread: Bool = false, anyNeedsInput: Bool = false) {
+    public init(live: Int = 0, running: Int = 0, anyUnread: Bool = false, anyNeedsInput: Bool = false,
+                needsInput: Int = 0, unread: Int = 0) {
         self.live = live
         self.running = running
         self.anyUnread = anyUnread
         self.anyNeedsInput = anyNeedsInput
+        self.needsInput = needsInput
+        self.unread = unread
     }
 
     public var json: JSON { (try? JSON.from(self)) ?? .null }
@@ -69,7 +76,10 @@ public enum AgentOutcome: Equatable, Sendable {
 }
 
 public struct AgentTracker: Equatable, Sendable {
-    public static let notificationTypesNeedingInput: Set<String> = ["permission_prompt", "idle_prompt", "elicitation_dialog"]
+    /// Notifications meaning "Claude is blocked on you": a permission prompt or a question. Not `idle_prompt`: Claude
+    /// Code sends that 60 s after any finished turn, so it would turn every read, finished session into "needs input"
+    /// (`Stop` already marks a finished turn unread).
+    public static let notificationTypesNeedingInput: Set<String> = ["permission_prompt", "elicitation_dialog"]
 
     public private(set) var agents: [String: AgentState] = [:]
     public private(set) var focusedTab: String?
@@ -222,7 +232,7 @@ public struct AgentTracker: Equatable, Sendable {
             s.live += 1
             if a.phase == .running { s.running += 1 }
             if a.unread { s.anyUnread = true }
-            if a.phase == .needsInput { s.anyNeedsInput = true }
+            if a.phase == .needsInput { s.anyNeedsInput = true; s.needsInput += 1 } else if a.unread { s.unread += 1 }
         }
         return s
     }

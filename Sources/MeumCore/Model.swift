@@ -151,6 +151,8 @@ public struct Workspace: Codable, Equatable, Sendable, Identifiable {
     public var cwd: String?
     public var root: LayoutNode?
     public var focusedCardID: UUID?
+    /// The sidebar group it belongs to (`AppState.groups`); nil: none.
+    public var group: UUID?
 
     public init(id: UUID = UUID(), name: String, color: String? = nil, icon: String? = nil, pinned: Bool = false,
                 cwd: String? = nil, root: LayoutNode? = nil, focusedCardID: UUID? = nil) {
@@ -171,11 +173,37 @@ public struct AppState: Codable, Equatable, Sendable {
     public var version: Int
     public var workspaces: [Workspace]
     public var selectedWorkspaceID: UUID?
+    /// Sidebar groups. Their members (`Workspace.group`) sit next to each other in `workspaces`; a group's place
+    /// in the sidebar is its first member's. A group without members is dropped (`normalizeGroups`).
+    public var groups: [WorkspaceGroup]
 
-    public init(workspaces: [Workspace] = [], selectedWorkspaceID: UUID? = nil) {
+    public init(workspaces: [Workspace] = [], selectedWorkspaceID: UUID? = nil, groups: [WorkspaceGroup] = []) {
         self.version = AppState.currentVersion
         self.workspaces = workspaces
         self.selectedWorkspaceID = selectedWorkspaceID
+        self.groups = groups
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        version = try c.decode(Int.self, forKey: .version)
+        workspaces = try c.decode([Workspace].self, forKey: .workspaces)
+        selectedWorkspaceID = try c.decodeIfPresent(UUID.self, forKey: .selectedWorkspaceID)
+        groups = try c.decodeIfPresent([WorkspaceGroup].self, forKey: .groups) ?? []   // state from before groups
+    }
+}
+
+/// A collapsible group of workspaces in the sidebar.
+public struct WorkspaceGroup: Codable, Equatable, Sendable, Identifiable {
+    public var id: UUID
+    public var name: String
+    /// Folded: the sidebar shows only the group's header.
+    public var collapsed: Bool
+
+    public init(id: UUID = UUID(), name: String, collapsed: Bool = false) {
+        self.id = id
+        self.name = name
+        self.collapsed = collapsed
     }
 }
 

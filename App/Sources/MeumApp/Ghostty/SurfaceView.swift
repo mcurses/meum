@@ -59,6 +59,7 @@ final class SurfaceView: NSView {
         self.env = env
         super.init(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
         wantsLayer = true
+        registerForDraggedTypes([.fileURL, .URL, .string, .png, .tiff])
         let center = NotificationCenter.default
         for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification] {
             observers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in

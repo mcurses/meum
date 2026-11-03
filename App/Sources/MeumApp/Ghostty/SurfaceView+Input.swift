@@ -3,12 +3,36 @@
 // 80f822bfe5d697567e18a4ce0f15569a55a729ea. Kept verbatim in substance: keyDown with interpretKeyEvents and the
 // full NSTextInputClient (dead keys, IME composition, the committed-composition fence), modifier translation,
 // mouse buttons, scrolling, cursor shapes and the Edit-menu actions. Dropped: agterm's pane lead, status
-// clearing, link-policy and HUD hooks, drag-and-drop.
+// clearing, link-policy and HUD hooks. Drag-and-drop came back later (meum's own, after agterm's).
 
 import AppKit
 import GhosttyKit
 
 extension SurfaceView {
+    // MARK: - Drops
+
+    /// Files, text and images can be dropped onto a terminal (the registered types are set in `init`).
+    override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        GhosttyCallbacks.hasInsertable(sender.draggingPasteboard) ? .copy : []
+    }
+
+    override func draggingUpdated(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        GhosttyCallbacks.hasInsertable(sender.draggingPasteboard) ? .copy : []
+    }
+
+    /// Inserts what was dropped as a paste: file paths shell-escaped and space-joined, text verbatim, image data
+    /// as the path of a saved PNG. Bracketed when the program asked for it, so a multi-line drop is not run line
+    /// by line. The terminal that took the drop gets the keyboard.
+    override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
+        guard let text = GhosttyCallbacks.pasteboardText(sender.draggingPasteboard, imagesAsFiles: true) else { return false }
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.window?.makeFirstResponder(self)
+            self.insertPasted(text: text)
+        }
+        return true
+    }
+
     // MARK: - Keyboard
 
     override func keyDown(with event: NSEvent) {
@@ -415,7 +439,7 @@ extension SurfaceView: NSMenuItemValidation {
             guard let surface else { return false }
             return ghostty_surface_has_selection(surface)
         case #selector(paste(_:)):
-            return surface != nil && GhosttyCallbacks.pasteboardText(.general) != nil
+            return surface != nil && GhosttyCallbacks.hasInsertable(.general)
         case #selector(selectAll(_:)):
             return surface != nil
         default:

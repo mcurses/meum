@@ -5,6 +5,8 @@ import AppKit
 final class TerminalCardView: CardHostView {
     let cardID: UUID
     let strip = TabStripView()
+    /// Shown instead of the strip on a one-tab card, so its tab can still be dragged elsewhere.
+    let grabHandle = GrabHandleView()
     let surfaceArea = FlippedView()
     private(set) var surfaces: [UUID: SurfaceView] = [:]
     /// Widget tabs: the widget's view instead of a surface (`WidgetManager` owns the widget).
@@ -22,6 +24,11 @@ final class TerminalCardView: CardHostView {
         surfaceArea.wantsLayer = true
         content.addSubview(surfaceArea)
         content.addSubview(strip)
+        grabHandle.frame = NSRect(x: (content.bounds.width - GrabHandleView.size.width) / 2, y: 0,
+                                  width: GrabHandleView.size.width, height: GrabHandleView.size.height)
+        grabHandle.autoresizingMask = [.minXMargin, .maxXMargin]
+        grabHandle.tab = { [weak self] in self?.selectedTabID }
+        content.addSubview(grabHandle)
         strip.onItemsChanged = { [weak self] in self?.updateStripVisibility() }
         updateStripVisibility()
     }
@@ -31,6 +38,7 @@ final class TerminalCardView: CardHostView {
 
     private func updateStripVisibility() {
         let show = strip.items.count > 1
+        grabHandle.isHidden = show
         guard strip.isHidden == show else { return }
         strip.isHidden = !show
         let top = show ? TabStripView.height : 0
@@ -294,5 +302,65 @@ final class TabStripView: NSView {
 
     override func mouseExited(with event: NSEvent) {
         if hoverID != nil { hoverID = nil; needsDisplay = true }
+    }
+}
+
+/// A small grip at the top centre of a card without a tab strip: dragging it drags the card's tab, as dragging the
+/// tab in a strip would (into another card, or onto a card's edge to split it; Escape cancels). It sits in the
+/// terminal's top padding, faint until the pointer is over it.
+final class GrabHandleView: NSView {
+    static let size = NSSize(width: 56, height: 10)
+    /// The tab a drag moves (the card's selected tab).
+    var tab: () -> UUID? = { nil }
+    var onDragBegan: ((UUID, NSPoint) -> Void)?
+    var onDragMoved: ((NSPoint) -> Void)?
+    var onDragEnded: ((NSPoint) -> Void)?
+    private var hover = false { didSet { if hover != oldValue { needsDisplay = true } } }
+    private var pressPoint: NSPoint?
+    private var dragging: UUID?
+    private var trackingArea: NSTrackingArea?
+
+    override var isFlipped: Bool { true }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let pill = NSRect(x: (bounds.width - 36) / 2, y: 3, width: 36, height: 4)
+        NSColor(white: 1, alpha: hover || dragging != nil ? 0.55 : 0.18).setFill()
+        NSBezierPath(roundedRect: pill, xRadius: 2, yRadius: 2).fill()
+    }
+
+    override func updateTrackingAreas() {
+        if let trackingArea { removeTrackingArea(trackingArea) }
+        let a = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .cursorUpdate],
+                               owner: self, userInfo: nil)
+        addTrackingArea(a)
+        trackingArea = a
+        super.updateTrackingAreas()
+    }
+
+    override func mouseEntered(with event: NSEvent) { hover = true }
+    override func mouseExited(with event: NSEvent) { hover = false }
+    override func cursorUpdate(with event: NSEvent) { NSCursor.openHand.set() }
+
+    override func mouseDown(with event: NSEvent) {
+        pressPoint = event.locationInWindow
+        dragging = nil
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let start = pressPoint else { return }
+        let p = event.locationInWindow
+        if dragging == nil {
+            guard hypot(p.x - start.x, p.y - start.y) >= 4, let t = tab() else { return }
+            dragging = t
+            onDragBegan?(t, p)
+        }
+        onDragMoved?(p)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        defer { pressPoint = nil; dragging = nil; needsDisplay = true }
+        guard dragging != nil else { return }
+        onDragEnded?(event.locationInWindow)
     }
 }

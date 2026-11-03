@@ -51,6 +51,21 @@ final class ZmxSessions {
         return Set(out.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty && !$0.contains(" ") }) // drops "no sessions found in ..."
     }
 
+    /// Live sessions and the pid of each one's process (`zmx list`: "name=… pid=…"). Empty on error.
+    func pids() -> [String: pid_t] {
+        guard let out = run(["list"]) else { return [:] }
+        var found: [String: pid_t] = [:]
+        for line in out.split(separator: "\n") {
+            var name: String?, pid: pid_t?
+            for field in line.split(whereSeparator: { $0 == "\t" || $0 == " " }) {
+                if field.hasPrefix("name=") { name = String(field.dropFirst(5)) }
+                if field.hasPrefix("pid=") { pid = pid_t(field.dropFirst(4)) }
+            }
+            if let name, let pid { found[name] = pid }
+        }
+        return found
+    }
+
     /// Kills the sessions of these tabs, off the main thread. Only names with our prefix are ever killed.
     func kill(tabs: [UUID]) {
         let names = tabs.map(name(for:)).filter { $0.hasPrefix(prefix) }

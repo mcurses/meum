@@ -91,7 +91,9 @@ final class GhosttyCallbacks: @unchecked Sendable {
     /// A paste (⌘V or `paste_from_clipboard`) asks for text/plain; answer from the pasteboard.
     func readClipboard(_ read: ClipboardRead) -> ghostty_clipboard_read_result_e {
         guard let surface = surface(from: read.userdata) else { return GHOSTTY_CLIPBOARD_READ_UNSUPPORTED }
-        let text = Self.pasteboardText(Self.pasteboard(for: read.location))
+        // a paste of an image (a screenshot, a copied picture) becomes the path of a saved PNG
+        let text = Self.pasteboardText(Self.pasteboard(for: read.location),
+                                       imagesAsFiles: read.location != GHOSTTY_CLIPBOARD_SELECTION)
         let wantsText = (0..<Int(read.mimesLen)).contains { i in
             read.mimes?[i].map { String(cString: $0) == "text/plain" } ?? false
         }
@@ -130,13 +132,59 @@ final class GhosttyCallbacks: @unchecked Sendable {
         return NSPasteboard(name: .init((Bundle.main.bundleIdentifier ?? "io.github.mcurses.meum") + ".selection"))
     }
 
-    /// File URLs become shell-escaped paths, space-joined; a plain string comes back verbatim.
-    static func pasteboardText(_ pb: NSPasteboard) -> String? {
+    /// File URLs become shell-escaped paths, space-joined; a plain string comes back verbatim. With
+    /// `imagesAsFiles`, image data without a file (a screenshot on the clipboard, an image dragged out of a
+    /// browser) is saved as a PNG and its path comes back: Claude Code attaches a pasted image path, a shell gets
+    /// a usable file.
+    static func pasteboardText(_ pb: NSPasteboard, imagesAsFiles: Bool = false) -> String? {
         if let urls = pb.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL],
            !urls.isEmpty {
             return urls.map { shellEscape($0.path) }.joined(separator: " ")
         }
-        return pb.string(forType: .string).flatMap { $0.isEmpty ? nil : $0 }
+        if let s = pb.string(forType: .string), !s.isEmpty { return s }
+        if imagesAsFiles, let path = savePastedImage(pb) { return shellEscape(path) }
+        return nil
+    }
+
+    /// Whether a paste or drop has something to insert, without saving anything.
+    static func hasInsertable(_ pb: NSPasteboard) -> Bool {
+        pasteboardText(pb) != nil || hasImage(pb)
+    }
+
+    static func hasImage(_ pb: NSPasteboard) -> Bool {
+        pb.availableType(from: [.png, .tiff]) != nil
+    }
+
+    /// Where pasted and dropped images are saved: `~/Library/Caches/<bundle id>/pasted/`. Files older than a week
+    /// are removed when a new one is saved.
+    static var pastedImagesDirectory: URL {
+        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        return caches.appendingPathComponent(Bundle.main.bundleIdentifier ?? "io.github.mcurses.meum", isDirectory: true)
+            .appendingPathComponent("pasted", isDirectory: true)
+    }
+
+    static func savePastedImage(_ pb: NSPasteboard) -> String? {
+        let png: Data? = pb.data(forType: .png) ?? pb.data(forType: .tiff).flatMap { tiff in
+            NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:])
+        }
+        guard let png, !png.isEmpty else { return nil }
+        let fm = FileManager.default
+        let dir = pastedImagesDirectory
+        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        let week = Date().addingTimeInterval(-7 * 24 * 3600)
+        for f in (try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.contentModificationDateKey])) ?? [] {
+            if let d = try? f.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate, d < week {
+                try? fm.removeItem(at: f)
+            }
+        }
+        let stamp = DateFormatter()
+        stamp.dateFormat = "yyyyMMdd-HHmmss-SSS"
+        let url = dir.appendingPathComponent("pasted-\(stamp.string(from: Date())).png")
+        do { try png.write(to: url) } catch {
+            Log.error("saving a pasted image failed: \(error)")
+            return nil
+        }
+        return url.path
     }
 
     static func shellEscape(_ s: String) -> String {

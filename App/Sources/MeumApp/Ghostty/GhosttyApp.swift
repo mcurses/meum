@@ -84,15 +84,19 @@ final class GhosttyApp {
     }
 
     /// Rebuilds the config with new terminal settings and hands it to the app and every surface (live).
-    func apply(_ t: TerminalSettings) {
-        guard t != terminal else { return }
+    /// `force` rebuilds even when the settings are the same: the config files on disk may have changed.
+    func apply(_ t: TerminalSettings, force: Bool = false) {
+        guard force || t != terminal else { return }
         terminal = t
         guard let app, let cfg = makeConfig(t) else { return }
         ghostty_app_update_config(app, cfg)
         if let old = config { retiredConfigs.append(old) }
         config = cfg
-        Log.info("ghostty config reloaded: font=\(t.fontFamily ?? "default") size=\(t.fontSize) extra=\(t.extraConfigPath ?? "-")")
+        Log.info("ghostty config \(force ? "reloaded from disk" : "reloaded"): font=\(t.fontFamily ?? "default") size=\(t.fontSize) extra=\(t.extraConfigPath ?? "-")")
     }
+
+    /// Reads the config files again (meum's `ghostty.conf`, the extra config) with the current settings.
+    func reloadFromDisk() { apply(terminal, force: true) }
 
     /// Boots libghostty. Must run before any surface is created; `configDir` holds the generated config.
     func start(configDir: URL, terminal t: TerminalSettings = TerminalSettings()) {

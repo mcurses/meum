@@ -18,6 +18,7 @@ import MeumCore
 ///   ime MARKED COMMIT                   NSTextInputClient: setMarkedText(MARKED) then insertText(COMMIT)
 ///   marked TEXT                         NSTextInputClient: setMarkedText(TEXT) only
 ///   action BINDING                      a Ghostty binding action on the focused surface (scroll_to_top …)
+///   drop TAB file:PATH|text:T|png:PATH  a simulated drop onto a tab's terminal, from a private pasteboard
 ///   key KEYCODE                         a plain key press through the event queue (53: Escape)
 ///   chord COMBO [KEYCODE]               a key chord ("shift+cmd+r") through NSApp.sendEvent: local monitors, menu
 ///                                       key equivalents, then the key window (KEYCODE default: US layout)
@@ -172,6 +173,28 @@ final class DebugControl {
                                                 isARepeat: false, keyCode: code) else { throw Failure(description: "event") }
                 NSApp.postEvent(ev, atStart: false)
             }
+        case "drop":
+            // drop TAB file:PATH | text:TEXT | png:PATH   a simulated drag onto a tab's terminal (its real
+            // draggingEntered/performDragOperation), from a private pasteboard: the user's clipboard is untouched
+            guard args.count >= 2, let id = UUID(uuidString: args[0]), let s = controller.surface(forTab: id) else {
+                throw Failure(description: "need TAB file:PATH|text:TEXT|png:PATH")
+            }
+            let pb = NSPasteboard(name: .init("meum.debug.drop"))
+            pb.clearContents()
+            let what = args.dropFirst().joined(separator: " ")
+            if what.hasPrefix("file:") {
+                pb.writeObjects([URL(fileURLWithPath: String(what.dropFirst(5))) as NSURL])
+            } else if what.hasPrefix("png:") {
+                pb.setData(try Data(contentsOf: URL(fileURLWithPath: String(what.dropFirst(4)))), forType: .png)
+            } else {
+                pb.setString(what.hasPrefix("text:") ? String(what.dropFirst(5)) : what, forType: .string)
+            }
+            let info = DebugDrag(pasteboard: pb, window: controller.window)
+            guard s.draggingEntered(info) == .copy else { throw Failure(description: "drop refused") }
+            guard s.performDragOperation(info) else { throw Failure(description: "drop failed") }
+        case "ghostty-reload":
+            // what Settings > Terminal > Reload does: read the Ghostty config files again
+            GhosttyApp.shared.reloadFromDisk()
         case "record-shortcut":
             NotificationCenter.default.post(name: ShortcutsSection.recordRequest, object: rest)
         case "menu":
@@ -189,6 +212,11 @@ final class DebugControl {
             }
             let name = rest.split(separator: " ", maxSplits: 1).map(String.init)[1]
             controller.sidebarRename(controller.store.state.workspaces[i].id, to: name)
+        case "rename-field":
+            // rename-field TEXT: types into the open inline rename field and presses Return
+            guard let f = controller.sidebarCard.sidebar.renameField else { throw Failure(description: "no rename field open") }
+            f.stringValue = rest
+            _ = f.sendAction(f.action, to: f.target)
         case "move":
             guard args.count == 2, let from = Int(args[0]), let to = Int(args[1]),
                   controller.store.state.workspaces.indices.contains(from) else {
@@ -240,7 +268,7 @@ final class DebugControl {
                 st.updateTab(s.tabID) { $0.agent = AgentSnapshot(sessionID: id, cwd: $0.cwd ?? NSHomeDirectory()) }
             }
         case "mouse":
-            // mouse down|drag|up|move X Y [CLICKS]: an NSEvent at container coordinates (top-left origin) sent
+            // mouse down|drag|up|move X Y [CLICKS] [MODS]: an NSEvent at container coordinates (top-left origin) sent
             // through the window, i.e. AppKit's own hit testing and mouse tracking (not the window server's)
             guard args.count >= 3, let x = Double(args[1]), let y = Double(args[2]) else {
                 throw Failure(description: "need down|drag|up|move X Y")
@@ -250,7 +278,15 @@ final class DebugControl {
             guard let type = types[args[0]] else { throw Failure(description: "bad mouse event") }
             let w = controller.window
             let loc = NSPoint(x: x, y: w.frame.height - y)
-            guard let ev = NSEvent.mouseEvent(with: type, location: loc, modifierFlags: [],
+            // optional 5th argument: modifiers, comma separated (shift,cmd)
+            var mods: NSEvent.ModifierFlags = []
+            if args.count > 4 {
+                for m in args[4].split(separator: ",") {
+                    switch m { case "shift": mods.insert(.shift); case "cmd": mods.insert(.command)
+                    case "alt": mods.insert(.option); case "ctrl": mods.insert(.control); default: break }
+                }
+            }
+            guard let ev = NSEvent.mouseEvent(with: type, location: loc, modifierFlags: mods,
                                               timestamp: ProcessInfo.processInfo.systemUptime,
                                               windowNumber: w.windowNumber, context: nil, eventNumber: counter,
                                               clickCount: args.count > 3 ? Int(args[3]) ?? 1 : 1,
@@ -289,6 +325,22 @@ final class DebugControl {
             }
             NSApp.postEvent(up, atStart: false)
             w.sendEvent(down)
+        case "sidebar-menu":
+            // sidebar-menu X Y TITLE[>SUBTITLE]: builds the sidebar's context menu for that point (container
+            // coordinates) and performs the item with that title, without showing the menu
+            guard args.count >= 3, let x = Double(args[0]), let y = Double(args[1]) else { throw Failure(description: "need X Y TITLE") }
+            let path = args[2...].joined(separator: " ").split(separator: ">").map(String.init)
+            let w = controller.window
+            guard let ev = NSEvent.mouseEvent(with: .rightMouseDown, location: NSPoint(x: x, y: w.frame.height - y), modifierFlags: [],
+                                              timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: w.windowNumber,
+                                              context: nil, eventNumber: counter, clickCount: 1, pressure: 1),
+                  var menu = controller.sidebarCard.sidebar.menu(for: ev) else { throw Failure(description: "no menu there") }
+            for (n, title) in path.enumerated() {
+                guard let i = menu.items.firstIndex(where: { $0.title == title }) else {
+                    throw Failure(description: "no item '\(title)' in \(menu.items.map(\.title))")
+                }
+                if n == path.count - 1 { menu.performActionForItem(at: i) } else if let sub = menu.items[i].submenu { menu = sub }
+            }
         case "settings-window":
             guard let settingsWindow else { throw Failure(description: "no settings window") }
             if rest == "close" { settingsWindow.close() } else { settingsWindow.show() }
@@ -410,10 +462,50 @@ final class DebugControl {
                 let r = controller.sidebarCard.sidebar.convert(h.0, to: controller.root)
                 return ["key": h.2, "frame": [r.minX, r.minY, r.width, r.height]]
             },
+            "sidebarRows": {
+                let sb = controller.sidebarCard.sidebar
+                return zip(sb.rows, sb.frames).map { row, f -> [String: Any] in
+                    let r = sb.convert(f, to: controller.root)
+                    var o: [String: Any] = ["frame": [r.minX, r.minY, r.width, r.height]]
+                    switch row {
+                    case .header(let gi):
+                        o["group"] = sb.groups[gi].name; o["collapsed"] = sb.groups[gi].collapsed
+                    case .workspace(let i):
+                        let it = sb.items[i]
+                        o["workspace"] = it.name; o["primary"] = it.selected; o["marked"] = sb.marked.contains(it.id)
+                    }
+                    return o
+                }
+            }(),
             "pid": Int(getpid()),
             "zmxPrefix": controller.sessions.prefix,
             "ghosttyDiagnostics": GhosttyApp.shared.diagnostics,
         ]
         return try JSONSerialization.data(withJSONObject: out, options: [.prettyPrinted, .sortedKeys])
     }
+}
+
+/// The minimum of an NSDraggingInfo for the `drop` debug command.
+final class DebugDrag: NSObject, NSDraggingInfo {
+    let draggingPasteboard: NSPasteboard
+    let draggingDestinationWindow: NSWindow?
+    init(pasteboard: NSPasteboard, window: NSWindow?) {
+        draggingPasteboard = pasteboard
+        draggingDestinationWindow = window
+    }
+    var draggingSourceOperationMask: NSDragOperation { .copy }
+    var draggingLocation: NSPoint { .zero }
+    var draggedImageLocation: NSPoint { .zero }
+    var draggedImage: NSImage? { nil }
+    var draggingSource: Any? { nil }
+    var draggingSequenceNumber: Int { 1 }
+    var draggingFormation: NSDraggingFormation = .default
+    var animatesToDestination = false
+    var numberOfValidItemsForDrop = 1
+    var springLoadingHighlight: NSSpringLoadingHighlight { .none }
+    func slideDraggedImage(to screenPoint: NSPoint) {}
+    func enumerateDraggingItems(options enumOpts: NSDraggingItemEnumerationOptions = [], for view: NSView?,
+                                classes classArray: [AnyClass], searchOptions: [NSPasteboard.ReadingOptionKey: Any] = [:],
+                                using block: (NSDraggingItem, Int, UnsafeMutablePointer<ObjCBool>) -> Void) {}
+    func resetSpringLoading() {}
 }

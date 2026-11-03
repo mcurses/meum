@@ -28,10 +28,13 @@ final class AppControl {
         }
     }
     /// The widget library: catalog, install, update, remove, and the trust check before a widget loads.
+    weak var updater: Updater?
     lazy var installer = WidgetInstaller(paths: controller.paths) { [weak self] in self?.settings?.value ?? Settings() }
     private var appActive = NSApp.isActive
     private var focusedTab: UUID?
     private var branchTimer: Timer?
+    private var portTimer: Timer?
+    private var portScanRunning = false
     private var branchWork: DispatchWorkItem?
     private let notifier: Notifier
 
@@ -75,10 +78,15 @@ final class AppControl {
         branchTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.refreshBranches() }
         }
+        refreshPorts()
+        portTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshPorts() }
+        }
     }
 
     func stop() {
         branchTimer?.invalidate()
+        portTimer?.invalidate()
         server?.stop()
     }
 
@@ -188,6 +196,46 @@ final class AppControl {
         }
     }
 
+    /// Listening TCP ports of each workspace's tab processes (their zmx sessions' process trees), off the main thread.
+    func refreshPorts() {
+        guard !portScanRunning else { return }
+        portScanRunning = true
+        let sessions = controller.sessions
+        let tabsByWorkspace: [(UUID, [String])] = controller.store.state.workspaces.map { ws in
+            (ws.id, ws.allTabs.map { sessions.name(for: $0.id) })
+        }
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let pids = sessions.pids()
+            var owner: [pid_t: UUID] = [:]
+            for (ws, names) in tabsByWorkspace {
+                for n in names { if let p = pids[n] { owner[p] = ws } }
+            }
+            let byPid = ListeningPorts.byRoot(Dictionary(uniqueKeysWithValues: owner.keys.map { ($0, $0) }))
+            var found: [UUID: [Int]] = [:]
+            for (pid, ports) in byPid { if let ws = owner[pid] { found[ws] = Array(Set((found[ws] ?? []) + ports)).sorted() } }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    self?.portScanRunning = false
+                    self?.applyPorts(found)
+                }
+            }
+        }
+    }
+
+    private func applyPorts(_ found: [UUID: [Int]]) {
+        var extras = controller.workspaceExtras
+        for ws in controller.store.state.workspaces {
+            let ports = found[ws.id] ?? []
+            guard (extras[ws.id]?.ports ?? []) != ports else { continue }
+            var e = extras[ws.id] ?? WorkspaceExtras()
+            e.ports = ports
+            extras[ws.id] = e
+            bus.publish("workspace.changed", ["id": .string(ws.id.uuidString), "fields": ["ports"],
+                                              "ports": .array(ports.map { .int($0) })])
+        }
+        controller.workspaceExtras = extras
+    }
+
     private func applyRemotes(_ found: [(UUID, [String])]) {
         var extras = controller.workspaceExtras
         for (id, remotes) in found where controller.store.state.workspace(id) != nil {
@@ -222,6 +270,8 @@ struct ControlBridge: ControlHandler {
         switch method {
         case MeumMethod.widgetSend, MeumMethod.widgetScreenshot:
             return try await api.handleAsync(method: method, params: params)   // the widget answers later
+        case MeumMethod.updateCheck, MeumMethod.updateInstall:
+            return try await api.handleUpdate(method: method, params: params)
         case _ where MeumMethod.widgetAsync.contains(method):
             return try await api.handleLibrary(method: method, params: params)   // waits for the network
         default:
@@ -260,7 +310,8 @@ final class LiveAgentStateSource: AgentStateSource {
 
     func summary(forWorkspace ws: Workspace) -> WorkspaceAgentSummary {
         let s = service.summary(tabs: ws.allTabs.map(\.id.uuidString))
-        return WorkspaceAgentSummary(liveSessions: s.live, anyUnread: s.anyUnread, anyNeedsInput: s.anyNeedsInput)
+        return WorkspaceAgentSummary(liveSessions: s.live, anyUnread: s.anyUnread, anyNeedsInput: s.anyNeedsInput,
+                                     needsInput: s.needsInput, unread: s.unread)
     }
 }
 

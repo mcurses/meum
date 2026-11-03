@@ -74,6 +74,9 @@ struct WorkspaceAgentSummary: Equatable {
     var liveSessions: Int = 0
     var anyUnread = false
     var anyNeedsInput = false
+    /// Of `liveSessions`: waiting on the user, and finished-but-unread (not waiting).
+    var needsInput = 0
+    var unread = 0
 }
 
 @MainActor

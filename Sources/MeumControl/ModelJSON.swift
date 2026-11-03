@@ -3,7 +3,7 @@
 //
 //   tree            {"version":"meum.v1","selectedWorkspaceID":…,"workspaces":[Workspace…],"agents":{tab: AgentState}}
 //   Workspace       {"id","name","color","icon","pinned","cwd","selected","focusedCardID","focusedTabID","branch",
-//                    "cwds":[…],"remotes":[…],"metadata":{key: value},"status":{key:{"value","color","url"}},
+//                    "cwds":[…],"remotes":[…],"ports":[listening TCP port…],"group","metadata":{key: value},"status":{key:{"value","color","url"}},
 //                    "root":Node|null}
 //   Node (card)     {"type":"card","id","selectedTabID","tabs":[Tab…]}
 //   Node (split)    {"type":"split","id","axis":"horizontal"|"vertical","ratio","first":Node,"second":Node}
@@ -33,12 +33,14 @@ public struct WorkspaceExtras: Equatable, Sendable {
     /// Origin URLs (credentials stripped) of the repositories of the workspace's directory and its tabs'
     /// directories, the workspace's own first, distinct.
     public var remotes: [String] = []
+    /// TCP ports that processes in the workspace's tabs listen on (dev servers), sorted.
+    public var ports: [Int] = []
     /// Insertion-ordered keys.
     public var status: [(key: String, entry: StatusEntry)] = []
     public init(branch: String? = nil) { self.branch = branch }
 
     public static func == (a: WorkspaceExtras, b: WorkspaceExtras) -> Bool {
-        a.branch == b.branch && a.remotes == b.remotes && a.status.map(\.key) == b.status.map(\.key) && a.status.map(\.entry) == b.status.map(\.entry)
+        a.branch == b.branch && a.remotes == b.remotes && a.ports == b.ports && a.status.map(\.key) == b.status.map(\.key) && a.status.map(\.entry) == b.status.map(\.entry)
     }
 
     public mutating func set(_ key: String, _ entry: StatusEntry) {
@@ -102,6 +104,8 @@ public enum ModelJSON {
             "focusedCardID": uuid(ws.focusedCardID), "focusedTabID": uuid(focusedTab(ws)?.id),
             "branch": str(extras?.branch), "cwds": .array(cwds(ws).map { .string($0) }),
             "remotes": .array((extras?.remotes ?? []).map { .string($0) }),
+            "ports": .array((extras?.ports ?? []).map { .int($0) }),
+            "group": uuid(ws.group),
             "metadata": .object((ws.metadata ?? [:]).mapValues { .string($0) }),
             "status": extras?.statusJSON ?? .object([:]), "tabCount": .int(ws.allTabs.count),
         ]
@@ -118,7 +122,19 @@ public enum ModelJSON {
     public static func tree(_ s: AppState, extras: [UUID: WorkspaceExtras], agents: JSON) -> JSON {
         ["version": .string(ControlInfo.apiVersion), "selectedWorkspaceID": uuid(s.selectedWorkspaceID),
          "workspaces": .array(s.workspaces.map { workspace($0, selected: $0.id == s.selectedWorkspaceID, extras: extras[$0.id]) }),
-         "agents": agents]
+         "groups": groups(s), "agents": agents]
+    }
+
+    /// Sidebar groups in sidebar order (by their first member), each with its members.
+    public static func groups(_ s: AppState) -> JSON {
+        var seen: [UUID] = []
+        for ws in s.workspaces { if let g = ws.group, !seen.contains(g) { seen.append(g) } }
+        return .array(seen.compactMap { s.group($0) }.map { group($0, in: s) })
+    }
+
+    public static func group(_ g: WorkspaceGroup, in s: AppState) -> JSON {
+        ["id": .string(g.id.uuidString), "name": .string(g.name), "collapsed": .bool(g.collapsed),
+         "workspaces": .array(s.members(of: g.id).map { .string($0.id.uuidString) })]
     }
 
     // MARK: events
