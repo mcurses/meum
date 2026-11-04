@@ -11,12 +11,16 @@ final class WorkspaceController: NSObject, SidebarHost {
     let store: WorkspaceStore
     let sessions: ZmxSessions
     var agents: AgentStateSource
+    /// Tabs running claude that meum hears nothing from (AppControl.refreshSilentAgents); a hollow dot marks them.
+    var silentAgentTabs: Set<UUID> = [] { didSet { if silentAgentTabs != oldValue { refreshChrome() } } }
     let paths: StatePaths
     let window: ContainerWindow
     let root = RootView()
     let sidebarCard = SidebarCardView(frame: NSRect(x: 0, y: 0, width: 240, height: 600))
     /// The widget cards under the sidebar, top to bottom (`WidgetManager` owns them).
     private(set) var widgetCards: [WidgetSlotCardView] = []
+    /// The built-in Tips widget: first in the widget stack while `showStartHint` is on.
+    let tipsCard = WidgetSlotCardView(frame: NSRect(x: 0, y: 0, width: 240, height: 120))
     private(set) var cardViews: [UUID: TerminalCardView] = [:]
     private(set) var shownWorkspaceID: UUID?
     private let emptyHint = NSTextField(labelWithString: "")
@@ -44,11 +48,13 @@ final class WorkspaceController: NSObject, SidebarHost {
     /// A widget card's height; nil when the widget hid it (`setPreferredHeight(0)`).
     func widgetHeight(_ card: WidgetSlotCardView) -> CGFloat? {
         if card.requestedHeight() == 0 { return nil }
+        if card === tipsCard { return card.requestedHeight() }
         return settings.widgetHeightAuto ? (card.preferredHeight ?? 150) : CGFloat(settings.widgetHeight)
     }
 
     /// Replaces the widget cards (after a widget reload or reorder).
-    func setWidgetCards(_ cards: [WidgetSlotCardView]) {
+    func setWidgetCards(_ installed: [WidgetSlotCardView]) {
+        let cards = [tipsCard] + installed
         for v in widgetCards where !cards.contains(where: { $0 === v }) {
             v.removeFromSuperview()
             currentFrames[ObjectIdentifier(v)] = nil
@@ -105,6 +111,16 @@ final class WorkspaceController: NSObject, SidebarHost {
         emptyHint.font = .systemFont(ofSize: 14, weight: .medium)
         emptyHint.isHidden = true
         root.addSubview(emptyHint)
+        let hint = StartHintView(frame: .zero)
+        hint.onClose = { [weak self] in self?.setSetting?("showStartHint", .bool(false)) }
+        tipsCard.host(hint)
+        tipsCard.requestedHeight = { [weak self, weak hint] in
+            guard let self, let hint, self.settings.showStartHint, !self.settings.sidebarCollapsed else { return 0 }
+            return hint.height(forWidth: self.sidebarWidth)
+        }
+        tipsCard.glass.reloadWallpaper()
+        root.addSubview(tipsCard, positioned: .above, relativeTo: sidebarCard)
+        widgetCards = [tipsCard]
         dropOverlay.frame = root.bounds
         dropOverlay.autoresizingMask = [.width, .height]
         root.addSubview(dropOverlay)
@@ -136,6 +152,7 @@ final class WorkspaceController: NSObject, SidebarHost {
     /// Applies settings live: geometry (gap, sidebar, widget), card look (radius, background), click-through.
     func applySettings(_ new: Settings, old: Settings?) {
         settings = new
+        if old?.showStartHint != new.showStartHint, old != nil { reconcile(animate: true) }
         root.catchClicks = new.gapsCatchClicks
         var a = CardAppearance.current
         a.radius = CGFloat(new.cornerRadius)
@@ -381,6 +398,8 @@ final class WorkspaceController: NSObject, SidebarHost {
         if let bin = tabBinDir {
             let path = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
             env["PATH"] = ([bin] + path.split(separator: ":").map(String.init).filter { $0 != bin }).joined(separator: ":")
+            // the Claude Code plugin starts `$MEUM_CLI mcp`: this meum's own CLI, wherever the app lives
+            env["\(Product.envPrefix)CLI"] = bin + "/meum"
         }
         let s = SurfaceView(tabID: tab.id, workingDirectory: cwd, command: command, env: env)
         s.onFocus = { [weak self] s in self?.surfaceFocused(s) }
@@ -420,8 +439,13 @@ final class WorkspaceController: NSObject, SidebarHost {
             for card in ws.cards {
                 guard let v = cardViews[card.id] else { continue }
                 v.strip.items = card.tabs.map { t in
-                    TabStripView.Item(id: t.id, title: Self.title(for: t), agent: agents.state(forTab: t.id))
+                    TabStripView.Item(id: t.id, title: Self.title(for: t), name: t.agent?.name,
+                                      labels: t.agent?.labels ?? [], agent: agents.state(forTab: t.id),
+                                      silent: silentAgentTabs.contains(t.id))
                 }
+                // a one-tab card has no strip: its grab handle names the session instead
+                v.grabHandle.labels = card.selectedTab.agent?.labels ?? []
+                v.grabHandle.setToolTip(name: card.selectedTab.agent?.name)
                 v.strip.selectedID = card.selectedTabID
                 let focused = card.id == ws.focusedCard?.id
                 v.strip.focused = focused
@@ -770,7 +794,8 @@ final class WorkspaceController: NSObject, SidebarHost {
                                status: ex?.status.map { SidebarStatus(key: $0.key, value: $0.entry.value, color: $0.entry.color,
                                                                      url: $0.entry.url) } ?? [],
                                directory: ws.focusedCard?.selectedTab.cwd ?? ws.cwd, metadata: ws.metadata ?? [:],
-                               ports: ex?.ports ?? [], group: ws.group)
+                               ports: ex?.ports ?? [], group: ws.group,
+                               labels: ws.labels ?? [])
         }
     }
 
@@ -779,6 +804,10 @@ final class WorkspaceController: NSObject, SidebarHost {
     func sidebarRename(_ id: UUID, to name: String) { store.mutate(.cosmetic) { $0.renameWorkspace(id, to: name) } }
     func sidebarClose(_ id: UUID) { closeWorkspace(id) }
     func sidebarMove(_ id: UUID, to index: Int) { store.mutate(.cosmetic) { $0.moveWorkspace(id, to: index) } }
+    func sidebarSetIcon(_ id: UUID, _ icon: String?) {
+        store.mutate(.cosmetic) { $0.setIcon(id, icon) }
+    }
+
     func sidebarSetColor(_ id: UUID, _ hex: String?) {
         store.mutate(.cosmetic) { $0.setColor(id, hex) }
     }

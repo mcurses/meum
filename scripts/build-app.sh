@@ -24,6 +24,16 @@ ZMX="$ROOT/vendor/zmx/zig-out/bin/zmx"
 [ -f "$GHOSTTY/macos/GhosttyKit.xcframework/macos-arm64/libghostty-internal.a" ] || {
   echo "build-app: GhosttyKit missing; run scripts/setup.sh" >&2; exit 1; }
 [ -x "$ZMX" ] || { echo "build-app: zmx missing; run scripts/setup.sh" >&2; exit 1; }
+# zmx's wire protocol must be the one recorded in scripts/zmx-protocol (why: see that file)
+ZMX_PROTO="$(sed -n 's/^pub const PROTOCOL_VERSION: u8 = \([0-9]*\);.*/\1/p' "$ROOT/vendor/zmx/src/ipc.zig")"
+ZMX_RECORDED="$(grep -v '^#' "$ROOT/scripts/zmx-protocol" | tr -d ' \n')"
+[ -n "$ZMX_PROTO" ] || { echo "build-app: can't read PROTOCOL_VERSION from vendor/zmx/src/ipc.zig" >&2; exit 1; }
+if [ "$ZMX_PROTO" != "$ZMX_RECORDED" ] && [ "${MEUM_ZMX_PROTOCOL_CHANGE:-}" != 1 ]; then
+  echo "build-app: vendor/zmx speaks wire protocol $ZMX_PROTO, scripts/zmx-protocol records $ZMX_RECORDED." >&2
+  echo "build-app: installing this meum would cut it off from every running session; read scripts/zmx-protocol" >&2
+  echo "build-app: (MEUM_ZMX_PROTOCOL_CHANGE=1 builds anyway, for an isolated test instance)" >&2
+  exit 1
+fi
 
 echo "build-app: swift build -c $CONFIG (App/)"
 (cd "$ROOT/App" && swift build -c "$CONFIG" --product MeumApp)
@@ -49,7 +59,7 @@ cp -R "$GHOSTTY/zig-out/share/ghostty/shell-integration" "$APP/Contents/Resource
 cp -R "$GHOSTTY/zig-out/share/ghostty/themes" "$APP/Contents/Resources/ghostty/"
 cp -R "$GHOSTTY/zig-out/share/terminfo" "$APP/Contents/Resources/terminfo"
 
-VERSION="${MEUM_VERSION:-0.1.0}"
+VERSION="${MEUM_VERSION:-$(cat "$ROOT/VERSION")}"   # VERSION: the release being prepared (local builds say so too)
 BUILD="$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo dev)"
 cat > "$APP/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>

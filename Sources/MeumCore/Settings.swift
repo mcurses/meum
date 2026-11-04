@@ -72,6 +72,8 @@ public struct Settings: Codable, Equatable, Sendable {
     /// Terminal font family; nil uses Ghostty's default.
     public var fontFamily: String?
     public var fontSize: Double = 13
+    /// A Ghostty colour theme by name (one of the themes bundled with meum); nil keeps meum's own colours.
+    public var terminalTheme: String?
     /// An extra Ghostty config file loaded after meum's own (and after `<state dir>/ghostty.conf`).
     public var ghosttyConfigPath: String?
     /// Clicks in the gaps between cards stay in meum instead of reaching the app behind.
@@ -83,6 +85,9 @@ public struct Settings: Codable, Equatable, Sendable {
     public var resumeClaude: Bool = true
     /// Look for a new meum release at launch and once a day (release builds only).
     public var checkUpdates: Bool = true
+    /// The one-line hint at the bottom of the window (gestures, terminals survive quitting, Settings, Help), until
+    /// it is closed.
+    public var showStartHint: Bool = true
     /// Keyboard shortcut overrides: action id (`Shortcuts.actions`) -> "cmd+shift+r", or "" for none.
     public var shortcuts: [String: String] = [:]
 
@@ -121,12 +126,14 @@ public struct Settings: Codable, Equatable, Sendable {
         solidColor = v(.solidColor, d.solidColor)
         fontFamily = (try? c.decodeIfPresent(String.self, forKey: .fontFamily)) ?? nil
         fontSize = v(.fontSize, d.fontSize)
+        terminalTheme = (try? c.decodeIfPresent(String.self, forKey: .terminalTheme)) ?? nil
         ghosttyConfigPath = (try? c.decodeIfPresent(String.self, forKey: .ghosttyConfigPath)) ?? nil
         gapsCatchClicks = v(.gapsCatchClicks, d.gapsCatchClicks)
         reattachSessions = v(.reattachSessions, d.reattachSessions)
         resumeClaude = v(.resumeClaude, d.resumeClaude)
         shortcuts = v(.shortcuts, d.shortcuts)
         checkUpdates = v(.checkUpdates, d.checkUpdates)
+        showStartHint = v(.showStartHint, d.showStartHint)
     }
 }
 

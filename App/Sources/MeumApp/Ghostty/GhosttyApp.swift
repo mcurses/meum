@@ -38,6 +38,14 @@ final class GhosttyApp {
         var fontFamily: String?
         var fontSize: Double = 13
         var extraConfigPath: String?
+        var theme: String?
+    }
+
+    /// The colour themes bundled with meum (Ghostty's), by name.
+    var themeNames: [String] {
+        guard let dir = resourcesDir.map({ $0 + "/themes" }),
+              let names = try? FileManager.default.contentsOfDirectory(atPath: dir) else { return [] }
+        return names.filter { !$0.hasPrefix(".") }.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
     }
 
     private var configDir: URL?
@@ -50,7 +58,11 @@ final class GhosttyApp {
     private func makeConfig(_ t: TerminalSettings) -> ghostty_config_t? {
         guard let configDir, let cfg = ghostty_config_new() else { return nil }
         let generated = configDir.appendingPathComponent("ghostty.generated.conf")
-        try? Self.defaultConfig.write(to: generated, atomically: true, encoding: .utf8)
+        // an explicit background beats a theme's in Ghostty: with a theme, meum's own background stays out
+        let base = t.theme?.isEmpty == false
+            ? Self.defaultConfig.split(separator: "\n").filter { !$0.hasPrefix("background =") }.joined(separator: "\n")
+            : Self.defaultConfig
+        try? base.write(to: generated, atomically: true, encoding: .utf8)
         generated.path.withCString { ghostty_config_load_file(cfg, $0) }
         let user = configDir.appendingPathComponent("ghostty.conf")
         if FileManager.default.fileExists(atPath: user.path) {
@@ -67,6 +79,9 @@ final class GhosttyApp {
         if let f = t.fontFamily, !f.isEmpty {
             // an empty font-family first resets the list the earlier files may have built up
             font += "font-family = \"\"\nfont-family = \"\(f.replacingOccurrences(of: "\"", with: ""))\"\n"
+        }
+        if let theme = t.theme, !theme.isEmpty {
+            font += "theme = \"\(theme.replacingOccurrences(of: "\"", with: ""))\"\n"
         }
         let fontFile = configDir.appendingPathComponent("ghostty.settings.conf")
         try? font.write(to: fontFile, atomically: true, encoding: .utf8)
@@ -92,7 +107,7 @@ final class GhosttyApp {
         ghostty_app_update_config(app, cfg)
         if let old = config { retiredConfigs.append(old) }
         config = cfg
-        Log.info("ghostty config \(force ? "reloaded from disk" : "reloaded"): font=\(t.fontFamily ?? "default") size=\(t.fontSize) extra=\(t.extraConfigPath ?? "-")")
+        Log.info("ghostty config \(force ? "reloaded from disk" : "reloaded"): font=\(t.fontFamily ?? "default") size=\(t.fontSize) theme=\(t.theme ?? "-") extra=\(t.extraConfigPath ?? "-")")
     }
 
     /// Reads the config files again (meum's `ghostty.conf`, the extra config) with the current settings.

@@ -29,6 +29,25 @@ final class WidgetLibraryTests: XCTestCase {
         XCTAssertFalse(WidgetTrust.decideHelper(id: "t", sha256: "lib", signedTeam: nil, pins: pins, teams: teams, developerMode: false).allowsLoading)
     }
 
+    func testMinMeum() throws {
+        let e = WidgetCatalog.Entry(id: "w", displayName: "W", description: "", scope: "global", version: "1.0",
+                                    apiVersion: "meum.v1", archs: ["arm64"], url: "https://x/w.zip", sha256: "00",
+                                    minMeum: "0.5.0")
+        XCTAssertEqual(e.needsMeum("0.4.0"), "0.5.0")
+        XCTAssertNil(e.needsMeum("0.5.0"))
+        XCTAssertNil(e.needsMeum("0.10.1"))
+        XCTAssertNil(e.needsMeum(nil), "a development build runs everything")
+        XCTAssertFalse(WidgetCatalog.runs(e, api: "meum.v1", arch: "arm64", meum: "0.4.2"))
+        XCTAssertTrue(WidgetCatalog.runs(e, api: "meum.v1", arch: "arm64", meum: "0.5.0"))
+        // an entry without the field (older catalogs) decodes and runs anywhere
+        let old = try JSONDecoder().decode(WidgetCatalog.Entry.self, from: Data("""
+            {"id":"w","displayName":"W","description":"","scope":"global","version":"1","apiVersion":"meum.v1",
+             "archs":["arm64"],"url":"https://x","sha256":"00"}
+            """.utf8))
+        XCTAssertNil(old.minMeum)
+        XCTAssertTrue(WidgetCatalog.runs(old, api: "meum.v1", arch: "arm64", meum: "0.1.0"))
+    }
+
     func testVersions() {
         XCTAssertTrue(widgetVersionIsNewer("1.10", than: "1.9"))
         XCTAssertTrue(widgetVersionIsNewer("2", than: "1.9.9"))
@@ -68,5 +87,18 @@ final class WidgetLibraryTests: XCTestCase {
         try SettingsJSON.set(&s, key: "widgetCatalogURL", value: .null)
         XCTAssertEqual(s.widgetCatalogURL, Settings.defaultWidgetCatalogURL)
         XCTAssertTrue(MeumMethod.handlerOwned.contains(MeumMethod.widgetInstall))
+    }
+
+    func testIsUpdate() {
+        let e = WidgetCatalog.Entry(id: "w", displayName: "W", description: "", scope: "global", version: "0.3.0",
+                                    apiVersion: "meum.v1", archs: ["arm64"], url: "u", sha256: "z", librarySha256: "lib3")
+        XCTAssertTrue(e.isUpdate(installedVersion: "0.2.0", installedLibrarySha256: "lib3"), "a known version decides")
+        XCTAssertFalse(e.isUpdate(installedVersion: "0.3.0", installedLibrarySha256: "other"))
+        XCTAssertFalse(e.isUpdate(installedVersion: nil, installedLibrarySha256: "lib3"), "unknown version, same library")
+        XCTAssertTrue(e.isUpdate(installedVersion: nil, installedLibrarySha256: "lib2"))
+        var old = e; old.librarySha256 = nil
+        XCTAssertTrue(old.isUpdate(installedVersion: nil, installedLibrarySha256: "lib3"), "nothing to compare: offer it")
+        let json = #"{"id":"w","displayName":"W","description":"","scope":"global","version":"1","apiVersion":"meum.v1","archs":[],"url":"u","sha256":"z"}"#
+        XCTAssertNil(try JSONDecoder().decode(WidgetCatalog.Entry.self, from: Data(json.utf8)).librarySha256)
     }
 }

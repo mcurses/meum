@@ -218,6 +218,14 @@ public struct AgentTracker: Equatable, Sendable {
 
     /// Drops a tab's agent (the tab was closed).
     @discardableResult
+    /// After meum restarts, a tab whose Claude session still runs gets an idle state until its next hook says
+    /// more. Returns the state set; nil when the tab already has one (a hook came first).
+    public mutating func restore(tab: String, state: AgentState) -> AgentState? {
+        guard agents[tab] == nil else { return nil }
+        agents[tab] = state
+        return state
+    }
+
     public mutating func forget(tab: String) -> AgentState? {
         if focusedTab == tab { focusedTab = nil }
         return agents.removeValue(forKey: tab)

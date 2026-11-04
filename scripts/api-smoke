@@ -1,0 +1,261 @@
+#!/usr/bin/env python3 -I
+"""Runs every control-API method against a real meum: build/meum.app, isolated (scripts/run-test-app.sh: its own
+state dir, widgets dir and zmx namespace, never the user's). Checks what each method does to the model, not only
+that it answers. Exits 1 on the first failure and says which. scripts/release.sh runs it before signing.
+
+Methods that need the network, a widget library or that act outside meum are listed in SKIPPED with the reason; a
+method in neither list fails the run, so a new one can't be added untested.
+
+Usage: scripts/api-smoke [--keep]     (--keep leaves the instance running for a look)
+"""
+import json, os, shutil, socket, subprocess, sys, tempfile, time
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SKIPPED = {
+    "widget.catalog": "fetches the library over the network",
+    "widget.install": "downloads",
+    "widget.update": "downloads",
+    "widget.remove": "needs an installed widget",
+    "widget.send": "needs a widget tab (the browser widget is not part of meum)",
+    "widget.screenshot": "needs a widget tab",
+    "app.update.check": "asks GitHub",
+    "app.update.install": "replaces the app",
+    "notify": "posts a real notification as meum",
+}
+
+
+class Fail(Exception):
+    pass
+
+
+class Client:
+    def __init__(self, path):
+        self.s = socket.socket(socket.AF_UNIX)
+        self.s.connect(path)
+        self.f = self.s.makefile("rwb")
+        self.n = 0
+        self.called = set()
+
+    def call(self, method, params=None, expect_error=None):
+        self.n += 1
+        self.called.add(method)
+        self.f.write((json.dumps({"id": self.n, "method": method, "params": params or {}}) + "\n").encode())
+        self.f.flush()
+        while True:
+            r = json.loads(self.f.readline())
+            if r.get("id") == self.n:
+                break
+        if expect_error:
+            if "error" not in r or r["error"]["code"] != expect_error:
+                raise Fail(f"{method} {params}: wanted error {expect_error}, got {r}")
+            return r["error"]
+        if "error" in r:
+            raise Fail(f"{method} {params}: {r['error']}")
+        return r.get("result")
+
+
+def check(cond, what):
+    if not cond:
+        raise Fail(what)
+
+
+def wait_for(pred, what, timeout=8):
+    end = time.time() + timeout
+    while time.time() < end:
+        v = pred()
+        if v:
+            return v
+        time.sleep(0.2)
+    raise Fail(f"timed out: {what}")
+
+
+def cards(node):
+    if not node:
+        return []
+    if node.get("type") == "card":
+        return [node]
+    return cards(node.get("first")) + cards(node.get("second"))
+
+
+def splits(node):
+    if not node or node.get("type") == "card":
+        return []
+    return [node] + splits(node.get("first")) + splits(node.get("second"))
+
+
+def run(c, events, tmp):
+    ping = c.call("system.ping")
+    served = set(ping["methods"])
+    check(ping["api"] == "meum.v1", "ping api")
+
+    # workspaces
+    t = c.call("tree")
+    first = t["workspaces"][0]["id"]
+    ws = c.call("workspace.new", {"name": "smoke-a", "cwd": tmp})["id"]
+    ws2 = c.call("workspace.new", {"name": "smoke-b"})["id"]
+    names = [w["name"] for w in c.call("workspace.list")]
+    check(names[-2:] == ["smoke-a", "smoke-b"], f"workspace.list order {names}")
+    c.call("workspace.rename", {"id": ws, "name": "smoke-renamed"})
+    c.call("workspace.setColor", {"id": ws, "color": "#336699"})
+    c.call("workspace.setIcon", {"id": ws, "icon": "sf:leaf"})
+    c.call("workspace.setLabels", {"id": ws, "labels": ["one", "two"]})
+    c.call("workspace.setMeta", {"id": ws, "key": "k", "value": "v"})
+    c.call("workspace.pin", {"id": ws, "pinned": True})
+    c.call("workspace.reorder", {"id": ws2, "index": 0})
+    c.call("workspace.select", {"id": ws})
+    w = next(x for x in c.call("tree")["workspaces"] if x["id"] == ws)
+    check(w["name"] == "smoke-renamed" and w["color"] == "#336699" and w["icon"] == "sf:leaf", f"workspace fields {w}")
+    check(w["labels"] == ["one", "two"] and w["metadata"].get("k") == "v" and w["pinned"], f"labels/meta/pin {w}")
+    check(w["selected"], "workspace.select")
+    c.call("workspace.rename", {"id": ws, "name": "x" * 0}, expect_error="invalid_params")
+    c.call("workspace.select", {"id": "no-such"}, expect_error="not_found")
+
+    # groups and sidebar
+    g = c.call("group.new", {"name": "smoke-g", "workspaces": [ws, ws2]})
+    gid = g["id"]
+    c.call("group.rename", {"group": gid, "name": "smoke-g2"})
+    check(c.call("group.setCollapsed", {"group": gid, "collapsed": True})["collapsed"] is True, "group collapse")
+    c.call("workspace.setGroup", {"id": ws2, "group": None})
+    gl = c.call("group.list")["groups"]
+    check(len(gl) == 1 and gl[0]["name"] == "smoke-g2" and gl[0]["workspaces"] == [ws], f"group.list {gl}")
+    c.call("group.ungroup", {"group": gid})
+    check(c.call("group.list")["groups"] == [], "group.ungroup")
+    check(c.call("sidebar.setCollapsed", {"collapsed": True})["collapsed"] is True, "sidebar collapse")
+    check(c.call("sidebar.setCollapsed", {})["collapsed"] is False, "sidebar toggle")
+
+    # tabs, splits, typing and pasting
+    w = next(x for x in c.call("tree")["workspaces"] if x["id"] == ws)
+    tab1 = cards(w["root"])[0]["tabs"][0]["id"]
+    tab2 = c.call("tab.new", {"workspace": ws, "cwd": tmp, "split": "right"})["id"]
+    w = next(x for x in c.call("tree")["workspaces"] if x["id"] == ws)
+    check(len(cards(w["root"])) == 2, "tab.new split right makes a second card")
+    sp = splits(w["root"])[0]["id"]
+    check(abs(c.call("split.resize", {"split": sp, "ratio": 0.3})["ratio"] - 0.3) < 0.01, "split.resize")
+    c.call("tab.select", {"tab": tab2})
+    check(c.call("tab.focused")["tab"] == tab2, "tab.focused after tab.select")
+    typed, pasted = os.path.join(tmp, "typed"), os.path.join(tmp, "pasted")
+    def attached():  # a new tab's terminal starts a moment after the model has it
+        try:
+            c.call("tab.sendText", {"tab": tab2, "text": f"echo typed > {typed}\n"})
+            return True
+        except Fail as f:
+            if "unavailable" not in str(f):
+                raise
+            return False
+    wait_for(attached, "the new tab's terminal to start")
+    r = c.call("tab.paste", {"tab": tab2, "text": f"echo pasted > {pasted}", "submit": True})
+    check(r.get("submitted") is True, f"tab.paste submitted {r}")
+    wait_for(lambda: os.path.exists(typed) and os.path.exists(pasted), "the typed and pasted commands ran")
+    c.call("tab.paste", {"tab": "no-such", "text": "x"}, expect_error="not_found")
+    c.call("tab.move", {"tab": tab2, "card": cards(w["root"])[0]["id"]})
+    w = next(x for x in c.call("tree")["workspaces"] if x["id"] == ws)
+    check(len(cards(w["root"])) == 1 and len(cards(w["root"])[0]["tabs"]) == 2, "tab.move collapses the empty card")
+
+    # agent state from hooks, then labels on the session's tab
+    c.call("tab.setLabels", {"tab": tab1, "labels": ["x"]}, expect_error="unavailable")
+    hook = {"session_id": "smoke-session", "cwd": tmp, "transcript_path": os.path.join(tmp, "t.jsonl")}
+    c.call("agent.hook", {"tab": tab1, "payload": dict(hook, hook_event_name="SessionStart")})
+    c.call("agent.hook", {"tab": tab1, "payload": dict(hook, hook_event_name="Stop")})
+    a = c.call("tree")["agents"].get(tab1)
+    check(a and a["phase"] == "idle", f"agent after Stop {a}")
+    check(c.call("tab.setLabels", {"tab": tab1, "labels": ["smoke"]})["labels"] == ["smoke"], "tab.setLabels")
+    c.call("workspace.markUnread", {"id": ws})
+    c.call("workspace.markRead", {"id": ws})
+    check(c.call("tree")["agents"][tab1]["unread"] is False, "markRead")
+    c.call("agent.hook", {"tab": tab1, "payload": dict(hook, hook_event_name="SessionEnd", reason="other")})
+    check(tab1 not in c.call("tree")["agents"], "SessionEnd removes the agent state")
+
+    # status entries
+    c.call("status.set", {"workspace": ws, "key": "build", "value": "ok", "color": "#00ff00", "url": "https://example.com"})
+    w = next(x for x in c.call("tree")["workspaces"] if x["id"] == ws)
+    check(w["status"].get("build", {}).get("value") == "ok", f"status.set {w['status']}")
+    c.call("status.clear", {"workspace": ws, "key": "build"})
+    w = next(x for x in c.call("tree")["workspaces"] if x["id"] == ws)
+    check("build" not in w["status"], "status.clear")
+
+    # settings, and the widget trust that only Settings may change
+    check(c.call("settings.set", {"key": "cardGap", "value": 14})["value"] == 14, "settings.set")
+    check(c.call("settings.get", {"key": "cardGap"})["value"] == 14, "settings.get")
+    c.call("settings.set", {"key": "cardGap", "value": 999}, expect_error="invalid_params")
+    for k, v in [("widgetDeveloperMode", True), ("widgetTeamIDs", ["ABCDEFGHIJ"]), ("widgetCatalogURL", "file:///tmp/c.json")]:
+        c.call("settings.set", {"key": k, "value": v}, expect_error="forbidden")
+    check(c.call("settings.get", {"key": "widgetDeveloperMode"})["value"] is False, "developer mode stayed off")
+    c.call("widget.allow", {"id": "anything"}, expect_error="forbidden")
+
+    # widgets (none installed in the isolated folder)
+    check(c.call("widget.list")["widgets"] == [], "widget.list in an empty folder")
+    c.call("widget.reload")
+    c.call("widget.enable", {"id": "no-such", "enabled": True}, expect_error="not_found")
+
+    # closing
+    c.call("tab.close", {"tab": tab2})
+    c.call("workspace.close", {"id": ws2})
+    c.call("workspace.close", {"id": ws})
+    check([w["id"] for w in c.call("workspace.list")] == [first], "workspace.close")
+
+    # events seen on the subscribed connection
+    seen = set()
+    events.settimeout(0.5)
+    buf = b""
+    try:
+        while True:
+            chunk = events.recv(65536)
+            if not chunk:
+                break
+            buf += chunk
+    except socket.timeout:
+        pass
+    for line in buf.decode().splitlines():
+        o = json.loads(line)
+        if "type" in o:
+            seen.add(o["type"])
+    for e in ["workspace.added", "workspace.changed", "workspace.removed", "tab.added", "tab.removed", "tab.moved",
+              "split.resized", "settings.changed", "status.changed", "agent.changed", "agent.hook", "tab.labels"]:
+        check(e in seen, f"event {e} not seen (saw {sorted(seen)})")
+
+    c.called.update(["events.subscribe", "system.ping"])
+    untested = served - c.called - set(SKIPPED)
+    check(not untested, f"methods neither tested nor in SKIPPED: {sorted(untested)}")
+    return len(c.called), len(seen)
+
+
+def main():
+    keep = "--keep" in sys.argv
+    tmp = tempfile.mkdtemp(prefix="meum-smoke-", dir="/tmp")
+    env = dict(os.environ, MEUMT=os.path.join(tmp, "t"), TMPDIR=tmp + "/", MEUM_AUTOQUIT="300")
+    pid = int(subprocess.check_output([os.path.join(ROOT, "scripts/run-test-app.sh"), "--frame", "40,40,1000,640"],
+                                      env=env).strip())
+    sock = os.path.join(env["MEUMT"], "state", "meum.sock")
+    ok = False
+    try:
+        wait_for(lambda: os.path.exists(sock), "the test meum's socket", timeout=20)
+        time.sleep(1)
+        events = socket.socket(socket.AF_UNIX)
+        events.connect(sock)
+        events.sendall(b'{"id":1,"method":"events.subscribe","params":{}}\n')
+        work = os.path.join(tmp, "work")
+        os.makedirs(work)
+        n, e = run(Client(sock), events, work)
+        print(f"api-smoke: ok, {n} methods and {e} event types checked against {sock}")
+        ok = True
+    except Fail as f:
+        print(f"api-smoke: FAILED: {f}", file=sys.stderr)
+    finally:
+        if not keep:
+            os.kill(pid, 15)
+            # the test's terminals live on in its own zmx namespace: end them
+            zmx = os.path.join(ROOT, "build/meum.app/Contents/Resources/bin/zmx")
+            zenv = dict(os.environ, ZMX_DIR=tmp + "/meumtest-zmx")
+            time.sleep(0.5)
+            names = subprocess.run([zmx, "list", "--short"], env=zenv, capture_output=True, text=True).stdout.split()
+            for name in names:  # one at a time: a kill of several stops at the first that is already gone
+                subprocess.run([zmx, "kill", name, "--force"], env=zenv, capture_output=True)
+            if ok:
+                shutil.rmtree(tmp, ignore_errors=True)  # the folder this run made, nothing else
+        else:
+            print(f"api-smoke: left running, pid {pid}, socket {sock}")
+    sys.exit(0 if ok else 1)
+
+
+if __name__ == "__main__":
+    main()

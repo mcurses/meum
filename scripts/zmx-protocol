@@ -1,0 +1,11 @@
+# The zmx wire protocol byte (PROTOCOL_VERSION in vendor/zmx/src/ipc.zig) that meum's bundled zmx speaks.
+#
+# Terminals outlive meum: their zmx daemons keep running across a quit and an update. A meum whose zmx speaks a
+# different byte can't talk to the daemons the previous version started; after the update every surviving session
+# would be unreachable and meum would open fresh shells beside the orphaned ones.
+#
+# So the byte is recorded here. scripts/build-app.sh refuses a zmx whose byte differs from this file, and
+# scripts/release.sh --publish refuses a release whose byte differs from the last public one unless it is given
+# --zmx-protocol-change. Before changing it, make the new meum able to reach the old daemons (keep the previous
+# zmx as bin/zmx-<byte> and attach with the binary the daemon was started from), or accept losing the sessions.
+1

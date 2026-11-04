@@ -113,7 +113,13 @@ final class TabStripView: NSView {
     struct Item: Equatable {
         var id: UUID
         var title: String
+        /// The Claude Code session's name, drawn dimmer before the title (unless it has labels).
+        var name: String? = nil
+        /// Labels the session attached to itself, drawn as chips before the title.
+        var labels: [String] = []
         var agent: TabAgentState?
+        /// claude runs in the tab but no hook reached meum: a hollow dot instead of none
+        var silent: Bool = false
     }
 
     var items: [Item] = [] {
@@ -133,6 +139,7 @@ final class TabStripView: NSView {
     var onActivate: (() -> Void)?
     private var hoverID: UUID?
     private var trackingArea: NSTrackingArea?
+    private let tips = DrawnToolTips()
 
     override var isFlipped: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
@@ -163,6 +170,8 @@ final class TabStripView: NSView {
         NSColor(white: 1, alpha: 0.06).setFill()
         NSRect(x: 0, y: bounds.height - 1, width: bounds.width, height: 1).fill()
 
+        var tipRects: [(NSRect, String)] = []
+        defer { tips.apply(tipRects, to: self) }
         for (item, r) in segmentFrames() {
             let selected = item.id == selectedID
             if selected {
@@ -177,9 +186,23 @@ final class TabStripView: NSView {
                 let dot = NSRect(x: x, y: r.midY - 3.5, width: 7, height: 7)
                 Self.color(for: agent).setFill()
                 NSBezierPath(ovalIn: dot).fill()
+                tipRects.append((dot.insetBy(dx: -3, dy: -4), AgentLegend.tab(agent)))
+                x += 12
+            } else if item.silent {
+                let dot = NSRect(x: x + 0.5, y: r.midY - 3, width: 6, height: 6)
+                let ring = NSBezierPath(ovalIn: dot)
+                ring.lineWidth = 1.2
+                NSColor(white: 1, alpha: 0.45).setStroke()
+                ring.stroke()
+                tipRects.append((dot.insetBy(dx: -3, dy: -4), AgentLegend.silent))
                 x += 12
             }
             let showClose = selected || item.id == hoverID
+            for l in item.labels where x < r.maxX - 60 {
+                let w = LabelChip.draw(l, x: x, midY: r.midY, strong: selected)
+                tipRects.append((NSRect(x: x, y: r.midY - 7, width: w, height: 14), AgentLegend.tabLabel))
+                x += w + 4
+            }
             let titleWidth = r.maxX - x - (showClose ? 24 : 8)
             let para = NSMutableParagraphStyle()
             para.lineBreakMode = .byTruncatingTail
@@ -188,8 +211,15 @@ final class TabStripView: NSView {
                 .foregroundColor: NSColor(white: 1, alpha: selected ? 0.92 : 0.6),
                 .paragraphStyle: para,
             ]
-            (item.title as NSString).draw(in: NSRect(x: x, y: r.midY - 7.5, width: max(0, titleWidth), height: 16),
-                                          withAttributes: attrs)
+            let text = NSMutableAttributedString()
+            if item.labels.isEmpty, let name = item.name, !name.isEmpty {
+                var dim = attrs
+                dim[.font] = NSFont.systemFont(ofSize: 11.5, weight: .medium)
+                dim[.foregroundColor] = NSColor(white: 1, alpha: selected ? 0.55 : 0.38)
+                text.append(NSAttributedString(string: name + "  ", attributes: dim))
+            }
+            text.append(NSAttributedString(string: item.title, attributes: attrs))
+            text.draw(in: NSRect(x: x, y: r.midY - 7.5, width: max(0, titleWidth), height: 16))
             if showClose {
                 let c = closeRect(in: r)
                 let p = NSBezierPath()
@@ -310,6 +340,17 @@ final class TabStripView: NSView {
 /// terminal's top padding, faint until the pointer is over it.
 final class GrabHandleView: NSView {
     static let size = NSSize(width: 56, height: 10)
+    /// The session's labels, drawn as chips right of the handle (a one-tab card has no strip to show them).
+    var labels: [String] = [] {
+        didSet {
+            guard labels != oldValue, let sv = superview else { return }
+            // stays centred on the handle: as wide again on the left as the chips take on the right
+            let extra = labels.isEmpty ? 0 : labels.reduce(4) { $0 + LabelChip.width($1) + 4 }
+            let w = Self.size.width + 2 * extra
+            frame = NSRect(x: (sv.bounds.width - w) / 2, y: 0, width: w, height: labels.isEmpty ? Self.size.height : 16)
+            needsDisplay = true
+        }
+    }
     /// The tab a drag moves (the card's selected tab).
     var tab: () -> UUID? = { nil }
     var onDragBegan: ((UUID, NSPoint) -> Void)?
@@ -327,6 +368,15 @@ final class GrabHandleView: NSView {
         let pill = NSRect(x: (bounds.width - 36) / 2, y: 3, width: 36, height: 4)
         NSColor(white: 1, alpha: hover || dragging != nil ? 0.55 : 0.18).setFill()
         NSBezierPath(roundedRect: pill, xRadius: 2, yRadius: 2).fill()
+        var x = pill.maxX + 14
+        for l in labels { x += LabelChip.draw(l, x: x, midY: 8, strong: false) + 4 }
+    }
+
+    /// The handle's tooltip: the session's name, and what the chips are.
+    func setToolTip(name: String?) {
+        let parts = [name, labels.isEmpty ? nil : AgentLegend.tabLabel + ": " + labels.joined(separator: ", ")]
+        let t = parts.compactMap { $0 }.joined(separator: "\n")
+        toolTip = t.isEmpty ? nil : t
     }
 
     override func updateTrackingAreas() {
@@ -363,4 +413,68 @@ final class GrabHandleView: NSView {
         guard dragging != nil else { return }
         onDragEnded?(event.locationInWindow)
     }
+}
+
+/// A small rounded label ("maintainer") as tabs, the grab handle and the sidebar draw it.
+enum LabelChip {
+    static let font = NSFont.systemFont(ofSize: 9.5, weight: .semibold)
+
+    static func width(_ text: String) -> CGFloat {
+        ceil((text as NSString).size(withAttributes: [.font: font]).width) + 10
+    }
+
+    /// Draws the chip with its left edge at `x`, centred on `midY`; returns its width.
+    @discardableResult
+    static func draw(_ text: String, x: CGFloat, midY: CGFloat, strong: Bool) -> CGFloat {
+        let w = width(text)
+        let r = NSRect(x: x, y: midY - 7, width: w, height: 14)
+        NSColor(white: 1, alpha: strong ? 0.16 : 0.10).setFill()
+        NSBezierPath(roundedRect: r, xRadius: 4, yRadius: 4).fill()
+        let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor(white: 1, alpha: strong ? 0.85 : 0.65)]
+        (text as NSString).draw(at: NSPoint(x: x + 5, y: midY - 6.5), withAttributes: attrs)
+        return w
+    }
+}
+
+/// Tooltips for things a view draws itself (dots, chips, names): collected while drawing as (rect, text) and
+/// registered again only when they change.
+final class DrawnToolTips {
+    private var tips: [(NSRect, String)] = []
+    /// The owners AppKit shows (an owner without `view(_:stringForToolTip:…)` shows its description); kept alive here.
+    private var owners: [NSString] = []
+
+    func apply(_ new: [(NSRect, String)], to view: NSView) {
+        guard new.count != tips.count || zip(new, tips).contains(where: { $0.0 != $1.0 || $0.1 != $1.1 }) else { return }
+        tips = new
+        view.removeAllToolTips()
+        owners = new.map { $0.1 as NSString }
+        for (i, t) in new.enumerated() { view.addToolTip(t.0, owner: owners[i], userData: nil) }
+    }
+}
+
+/// What the agent dots and label chips mean, in words, for their tooltips.
+enum AgentLegend {
+    static func tab(_ s: TabAgentState) -> String {
+        switch s.phase {
+        case .needsInput: return "Claude is waiting for you"
+        case .running: return "Claude is working"
+        case .idle: return s.unread ? "Claude finished; not read yet" : "Claude is idle"
+        }
+    }
+
+    /// The sidebar's dots: one per live session; orange waits for you, blue finished unread, grey everything else.
+    static func workspace(_ a: WorkspaceAgentSummary) -> String {
+        guard a.liveSessions > 0 else { return "" }
+        let rest = max(0, a.liveSessions - a.needsInput - a.unread)
+        var parts: [String] = []
+        if a.needsInput > 0 { parts.append("\(a.needsInput) waiting for you (orange)") }
+        if a.unread > 0 { parts.append("\(a.unread) finished, not read yet (blue)") }
+        if rest > 0 { parts.append("\(rest) working or idle (grey)") }
+        return "Claude sessions: " + parts.joined(separator: ", ")
+    }
+
+    static let tabLabel = "A label the Claude session in this tab set on itself"
+    static let silent = "Claude runs here, but meum hears nothing from it, so there's no dot: its Claude hooks aren't "
+        + "installed for this profile, or it started before they were. Settings ▸ Claude hooks; then restart this Claude."
+    static let workspaceLabel = "A label of this workspace, set by a Claude session in it"
 }

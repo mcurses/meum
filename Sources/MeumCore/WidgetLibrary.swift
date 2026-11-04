@@ -31,14 +31,20 @@ public struct WidgetCatalog: Codable, Equatable, Sendable {
         public var url: String
         /// sha256 of the zip, lowercase hex.
         public var sha256: String
+        /// sha256 of the widget's signed library inside the zip: an installed library with another hash is not this
+        /// version. Optional (older entries lack it).
+        public var librarySha256: String?
         /// Whether its sidebar card has a collapsed look (for the library list; the widget itself decides).
         public var collapsedSidebar: Bool?
         /// Whether it ships a background helper (manifest "helper").
         public var helper: Bool?
+        /// The oldest meum that runs it (the release whose MeumKit has everything it uses). meum before 0.5
+        /// ignores the field; newer ones don't offer the widget to an older meum.
+        public var minMeum: String?
 
         public init(id: String, displayName: String, description: String, author: String? = nil, scope: String,
                     version: String, apiVersion: String, archs: [String], url: String, sha256: String,
-                    collapsedSidebar: Bool? = nil, helper: Bool? = nil) {
+                    collapsedSidebar: Bool? = nil, helper: Bool? = nil, librarySha256: String? = nil, minMeum: String? = nil) {
             self.id = id
             self.displayName = displayName
             self.description = description
@@ -51,6 +57,23 @@ public struct WidgetCatalog: Codable, Equatable, Sendable {
             self.sha256 = sha256
             self.collapsedSidebar = collapsedSidebar
             self.helper = helper
+            self.librarySha256 = librarySha256
+            self.minMeum = minMeum
+        }
+
+        /// The meum version this entry needs and `meum` (this app's version; nil in a development build) lacks.
+        public func needsMeum(_ meum: String?) -> String? {
+            guard let minMeum, let meum, widgetVersionIsNewer(minMeum, than: meum) else { return nil }
+            return minMeum
+        }
+
+        /// Whether this entry is an update for an installed copy. A known installed version decides by version; an
+        /// unknown one (installed before the library) by the library's hash when the entry has one, else it counts
+        /// as an update, so it can be brought under the library's control.
+        public func isUpdate(installedVersion: String?, installedLibrarySha256: String?) -> Bool {
+            if let v = installedVersion { return widgetVersionIsNewer(version, than: v) }
+            if let want = librarySha256, let have = installedLibrarySha256 { return want != have }
+            return true
         }
     }
 
@@ -61,8 +84,10 @@ public struct WidgetCatalog: Codable, Equatable, Sendable {
 
     public func entry(_ id: String) -> Entry? { widgets.first { $0.id == id } }
 
-    /// Whether this meum can run the entry: same API, and a matching CPU.
-    public static func runs(_ e: Entry, api: String, arch: String) -> Bool { e.apiVersion == api && e.archs.contains(arch) }
+    /// Whether this meum can run the entry: same API, a matching CPU, and not older than its `minMeum`.
+    public static func runs(_ e: Entry, api: String, arch: String, meum: String? = nil) -> Bool {
+        e.apiVersion == api && e.archs.contains(arch) && e.needsMeum(meum) == nil
+    }
 }
 
 /// Versions like "1.2.10": compared numerically by component; a missing component counts as 0.

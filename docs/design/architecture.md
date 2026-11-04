@@ -69,34 +69,9 @@ AgentSnapshot { sessionID: String, configDir: String?, transcriptPath: String?, 
   - Request: `{"id": 1, "method": "workspace.list", "params": {…}}`
   - Response: `{"id": 1, "result": …}` or `{"id": 1, "error": {"code": "not_found", "message": "…"}}`
   - The API version is `meum.v1`, returned by `system.ping`.
-- **Methods v1:**
-  - `system.ping`
-  - `tree`: the whole model plus agent state
-  - workspaces: `workspace.list`, `workspace.new {name?, cwd?, color?}`, `workspace.select`, `workspace.rename`,
-    `workspace.close`, `workspace.reorder {id, index}`, `workspace.setColor`, `workspace.pin`
-  - tabs: `tab.new {workspace?, card?, cwd?, command?, split?: "right"|"down"}`, `tab.select`, `tab.close`,
-    `tab.sendText {tab, text}` (typed: a newline submits),
-    `tab.paste {tab, text}` (a paste through the tab's terminal, bracketed when its program enabled mode 2004;
-    no focus change, no clipboard; works while the workspace is hidden. Errors: `not_found`, and `unavailable`
-    for a widget tab or a terminal not attached yet, i.e. its workspace not shown since launch),
-    `tab.focused` -> `{workspace, tab, widget}` (the selected workspace's focused tab; a dictation tool can
-    paste into the tab where dictation started)
-  - moving and resizing: `tab.move {tab, card?, index?, split?: "left"|"right"|"up"|"down"}` (without `split`:
-    into `card`, default the tab's own card, at `index` = its position there afterwards, default the end; with
-    `split`: `card` is split and the tab goes into the new card on that side; a card left empty is removed and
-    its split collapses; the target card may be in another workspace), `split.resize {split, ratio}`
-    (0.1…0.9, clamped)
-  - settings: `settings.get {key?}`, `settings.set {key, value}` (keys and ranges in `SettingsJSON`)
-  - workspace annotations: `status.set {workspace, key, value, color?, url?}` (a click on an entry with a `url` opens it
-    and publishes `status.clicked {workspace, key, value, url}`), `status.clear`, `notify {tab?, title, body?}`
-  - read state: `workspace.markRead`, `workspace.markUnread`
-  - `agent.hook {tab, configDir?, payload}`: what `meum-hook` sends
-  - widgets: `widget.list`, `widget.reload` (native widgets; docs/design/sidebar-widgets-extensibility.md, "As built")
-  - `events.subscribe {after?: seq}`: switches the connection to a stream of
-    `{"seq": n, "type": "...", "data": {...}}` lines. Types: `workspace.added`/`changed`/`removed`/`selected`,
-    `tab.moved`, `split.resized`, `settings.changed`,
-    `tab.added`/`changed`/`removed`/`selected`, `agent.changed`, `agent.hook` (raw), `status.changed`. An event
-    bus with a ring buffer lets `after` resume.
+- **Methods and events v1:** [docs/api.md](../api.md), generated from the doc comments in
+  `Sources/MeumControl/ControlHandler.swift` (`MeumMethod`, `MeumEvent`); a test fails when a method or event has
+  no comment, or the file is stale. `system.ping` lists the methods a running meum serves.
 - **Server:** MeumControl owns the socket and dispatch. The app supplies a
   `ControlHandler` (`func handle(method:params:) async throws -> JSON`). The server knows nothing about AppKit.
 - **AgentTracker:** a pure state machine.

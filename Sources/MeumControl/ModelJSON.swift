@@ -64,7 +64,8 @@ public enum ModelJSON {
     public static func snapshot(_ a: AgentSnapshot?) -> JSON {
         guard let a else { return .null }
         return ["sessionID": .string(a.sessionID), "configDir": str(a.configDir),
-                "transcriptPath": str(a.transcriptPath), "cwd": str(a.cwd)]
+                "transcriptPath": str(a.transcriptPath), "cwd": str(a.cwd), "name": str(a.name),
+                "labels": .array((a.labels ?? []).map { .string($0) })]
     }
 
     public static func tab(_ t: Tab) -> JSON {
@@ -99,7 +100,7 @@ public enum ModelJSON {
                                         agents: WorkspaceSummary? = nil) -> [String: JSON] {
         var o: [String: JSON] = [
             "id": .string(ws.id.uuidString), "name": .string(ws.name), "color": str(ws.color),
-            "icon": str(ws.icon),
+            "icon": str(ws.icon), "labels": .array((ws.labels ?? []).map { .string($0) }),
             "pinned": .bool(ws.pinned), "cwd": str(ws.cwd), "selected": .bool(selected),
             "focusedCardID": uuid(ws.focusedCardID), "focusedTabID": uuid(focusedTab(ws)?.id),
             "branch": str(extras?.branch), "cwds": .array(cwds(ws).map { .string($0) }),

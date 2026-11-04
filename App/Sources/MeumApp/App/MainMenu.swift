@@ -23,7 +23,7 @@ final class MainMenu: NSObject {
         app.addItem(.separator())
         let upd = app.addItem(withTitle: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "")
         upd.target = self
-        item(app, "Settings…", "settings", #selector(openSettings))
+        settingsItem = item(app, "Settings…", "settings", #selector(openSettings))
         app.addItem(.separator())
         app.addItem(withTitle: "Hide \(Product.name)", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         app.addItem(.separator())
@@ -77,6 +77,28 @@ final class MainMenu: NSObject {
             item(term, "Resize \(name)", "resize\(name)", #selector(resizeCard(_:))).representedObject = d.rawValue
         }
         add(term, to: main)
+
+        // Help: registered as the app's help menu, so macOS adds its search field (it finds every menu item)
+        let help = NSMenu(title: "Help")
+        for (title, topic) in [("Getting Started", HelpWindowController.Topic.start),
+                               ("What the Dots and Labels Mean", .dots),
+                               ("Command Line Tool and Claude Code", .cli)] {
+            let mi = help.addItem(withTitle: title, action: #selector(openHelp(_:)), keyEquivalent: "")
+            mi.target = self
+            mi.representedObject = topic.rawValue
+        }
+        let mcp = help.addItem(withTitle: "Copy the Claude Code Setup Command", action: #selector(copyMCPCommand), keyEquivalent: "")
+        mcp.target = self
+        help.addItem(.separator())
+        let keys = help.addItem(withTitle: "Keyboard Shortcuts…", action: #selector(openSettingsSection(_:)), keyEquivalent: "")
+        keys.target = self
+        keys.representedObject = "shortcuts"
+        help.addItem(.separator())
+        let un = help.addItem(withTitle: "Uninstall…", action: #selector(openHelp(_:)), keyEquivalent: "")
+        un.target = self
+        un.representedObject = HelpWindowController.Topic.uninstall.rawValue
+        add(help, to: main)
+        NSApp.helpMenu = help
 
         NSApp.mainMenu = main
         applyShortcuts(self.settings)
@@ -139,7 +161,27 @@ final class MainMenu: NSObject {
 
     /// Opens the settings window (set by the app delegate).
     var onSettings: (() -> Void)?
+    private var settingsItem: NSMenuItem?
+    /// "Settings…" carries a badge while widgets or meum itself have an update.
+    func setUpdateCount(_ n: Int) {
+        settingsItem?.badge = n > 0 ? .updates(count: n) : nil
+    }
     var onCheckForUpdates: (() -> Void)?
+    /// Opens the help window at a topic, and the settings window at a section (set by the app delegate).
+    var onHelp: ((HelpWindowController.Topic) -> Void)?
+    var onSettingsSection: ((String) -> Void)?
+    @objc func openHelp(_ s: NSMenuItem) {
+        if let t = (s.representedObject as? String).flatMap(HelpWindowController.Topic.init(rawValue:)) { onHelp?(t) }
+    }
+    @objc func openSettingsSection(_ s: NSMenuItem) {
+        if let id = s.representedObject as? String { onSettingsSection?(id) }
+    }
+    /// Copies the `claude mcp add` line, then shows where it is explained.
+    @objc func copyMCPCommand() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(HelpWindowController.mcpCommand, forType: .string)
+        onHelp?(.cli)
+    }
     @objc func checkForUpdates() { onCheckForUpdates?() }
     @objc func openSettings() { onSettings?() }
     @objc func newWorkspace() { controller.newWorkspace() }
@@ -179,6 +221,9 @@ extension MainMenu: NSMenuDelegate {
         let entries = controller.widgets?.scan() ?? []
         if entries.isEmpty {
             menu.addItem(withTitle: "No widgets installed", action: nil, keyEquivalent: "").isEnabled = false
+            let get = menu.addItem(withTitle: "Get Widgets…", action: #selector(openSettingsSection(_:)), keyEquivalent: "")
+            get.target = self
+            get.representedObject = "widgets"
         }
         for e in entries {
             let mi = NSMenuItem(title: e.displayName, action: #selector(addWidget(_:)), keyEquivalent: "")

@@ -9,6 +9,7 @@ import SwiftUI
 struct WidgetsSection: View {
     @ObservedObject var model: AppSettings
     let widgets: WidgetManager?
+    @ObservedObject var updates: UpdateCenter
     let set: (String, JSON) -> Void
     @State private var rows: [Row] = []
     @State private var error: String?
@@ -30,13 +31,31 @@ struct WidgetsSection: View {
         var installed: Bool
         var update: Bool
         var runs: Bool
+        var needsMeum: String? = nil
     }
     @State private var library: [LibraryRow] = []
     @State private var libraryState = "not loaded"
     @State private var busy: String?
+    @State private var trustOpen = false
+    @State private var catalogDraft = ""
+    @State private var teamsDraft = ""
+
+    private func syncTrustDrafts() {
+        catalogDraft = model.value.widgetCatalogURL
+        teamsDraft = model.value.widgetTeamIDs.joined(separator: ", ")
+    }
 
     var body: some View {
         Section("Widgets") {
+            HStack {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Tips")
+                    Text("built in: a few things no menu shows").font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Toggle("", isOn: Binding(get: { model.value.showStartHint }, set: { set("showStartHint", .bool($0)) }))
+                    .labelsHidden().toggleStyle(.switch)
+            }
             if rows.isEmpty {
                 Text("No widgets installed in \(widgets?.directory.path ?? "the widgets folder").")
                     .foregroundStyle(.secondary)
@@ -54,10 +73,10 @@ struct WidgetsSection: View {
                         .frame(width: 56, alignment: .trailing)
                 }
             }
-            Text("Workspace widgets show the selected workspace and sit above the global ones (like Tamago).")
+            Text("Workspace widgets show the selected workspace and sit above the global ones.")
                 .font(.caption).foregroundStyle(.secondary)
         }
-        Section("Widget Library") {
+        Section {
             ForEach(library) { r in libraryRow(r) }
             HStack {
                 Text(libraryState).font(.caption).foregroundStyle(.secondary)
@@ -66,8 +85,37 @@ struct WidgetsSection: View {
             }
             Toggle("Developer mode: load widgets that are not verified",
                    isOn: Binding(get: { model.value.widgetDeveloperMode }, set: { set("widgetDeveloperMode", .bool($0)) }))
+            DisclosureGroup("Where widgets come from", isExpanded: $trustOpen) {
+                HStack {
+                    TextField("Library address", text: $catalogDraft, prompt: Text(Settings.defaultWidgetCatalogURL))
+                        .onSubmit { set("widgetCatalogURL", catalogDraft.isEmpty ? .null : .string(catalogDraft)) }
+                    Button("Default") { set("widgetCatalogURL", .null) }
+                        .disabled(model.value.widgetCatalogURL == Settings.defaultWidgetCatalogURL)
+                }
+                TextField("Trusted developer teams", text: $teamsDraft, prompt: Text("Team IDs, comma-separated"))
+                    .onSubmit {
+                        let ids = teamsDraft.split(whereSeparator: { $0 == "," || $0 == " " }).map { JSON.string(String($0)) }
+                        set("widgetTeamIDs", .array(ids))
+                    }
+                Text("Only here: no program running in a tab can change these, turn on developer mode or allow a widget.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            .onAppear { syncTrustDrafts() }
+            .onChange(of: model.value.widgetCatalogURL) { _ in syncTrustDrafts() }
+            .onChange(of: model.value.widgetTeamIDs) { _ in syncTrustDrafts() }
         }
-        .onAppear { if library.isEmpty { loadLibrary() } }
+        header: {
+            HStack(spacing: 6) {
+                Text("Widget Library")
+                if !updates.widgetUpdates.isEmpty {
+                    UpdateDot()
+                    Text(updates.widgetUpdates.count == 1 ? "update available" : "\(updates.widgetUpdates.count) updates available")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+        }
+        // show the last background check at once, then fetch afresh every time the settings open
+        .onAppear { if let c = updates.catalog { show(c) }; loadLibrary() }
         .onChange(of: model.value.widgetDeveloperMode) { widgets?.reload(); refresh() }
         .onAppear { refresh() }
         .onChange(of: model.value.widgetOrder) { refresh() }
@@ -121,9 +169,12 @@ struct WidgetsSection: View {
             if busy == r.id {
                 ProgressView().controlSize(.small)
             } else if !r.runs {
-                Text("not for this Mac").font(.caption).foregroundStyle(.secondary)
+                Text(r.needsMeum.map { "needs meum \($0)" } ?? "not for this Mac").font(.caption).foregroundStyle(.secondary)
             } else if r.installed {
-                if r.update { Button("Update") { install(r, update: true) } }
+                if r.update {
+                    UpdateDot()
+                    Button("Update") { install(r, update: true) }
+                }
                 Button("Remove") { remove(r) }
             } else {
                 Button("Install") { install(r, update: false) }
@@ -140,16 +191,21 @@ struct WidgetsSection: View {
             defer { busy = nil }
             do {
                 let r = try await installer.catalogJSON()
-                library = (r["widgets"]?.arrayValue ?? []).map { w in
-                    LibraryRow(id: w["id"]?.stringValue ?? "", name: w["displayName"]?.stringValue ?? "",
-                               description: w["description"]?.stringValue ?? "", version: w["version"]?.stringValue ?? "",
-                               installed: w["installed"]?.boolValue ?? false, update: w["update"]?.boolValue ?? false,
-                               runs: w["runs"]?.boolValue ?? true)
-                }
+                updates.setCatalog(r)
+                show(r)
                 libraryState = library.isEmpty ? "The library is empty." : "From \(installer.catalogURL ?? "the catalog")"
             } catch {
                 libraryState = "Library unavailable: \(error)"
             }
+        }
+    }
+
+    private func show(_ r: JSON) {
+        library = (r["widgets"]?.arrayValue ?? []).map { w in
+            LibraryRow(id: w["id"]?.stringValue ?? "", name: w["displayName"]?.stringValue ?? "",
+                       description: w["description"]?.stringValue ?? "", version: w["version"]?.stringValue ?? "",
+                       installed: w["installed"]?.boolValue ?? false, update: w["update"]?.boolValue ?? false,
+                       runs: w["runs"]?.boolValue ?? true, needsMeum: w["needsMeum"]?.stringValue)
         }
     }
 

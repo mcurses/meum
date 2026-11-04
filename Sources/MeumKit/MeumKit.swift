@@ -23,7 +23,8 @@
 // `supportsCollapsedSidebar` and draws its own collapsed look on `sidebarCollapsedDidChange`; others are hidden
 // in the rail.
 //
-// Everything here is `meum.v1`; additions are allowed, changes are not.
+// Everything here is `meum.v1`; additions are allowed, changes are not. scripts/interface-diff enforces it at each
+// release against the last public one, and wants widgets/MINIMUM_MEUM set to the release that adds anything.
 
 import AppKit
 

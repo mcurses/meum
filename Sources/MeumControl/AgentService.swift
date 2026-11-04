@@ -74,6 +74,14 @@ public final class AgentService: @unchecked Sendable {
         for (t, s) in changed { bus.publish("agent.changed", ["tab": .string(t), "agent": s.json]) }
     }
 
+    /// Restores idle states for tabs whose Claude session survived a restart (tabs with a state are left alone).
+    public func restore(_ states: [String: AgentState]) {
+        lock.lock()
+        let set = states.compactMap { t, s in tracker.restore(tab: t, state: s).map { (t, $0) } }
+        lock.unlock()
+        for (t, s) in set { bus.publish("agent.changed", ["tab": .string(t), "agent": s.json]) }
+    }
+
     /// Call when a tab is closed.
     public func forget(tab: String) {
         lock.lock()

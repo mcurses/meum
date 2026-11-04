@@ -13,7 +13,8 @@
 #   scripts/release-widget.sh --folder <dir.meumwidget> <version> "<description>" [--publish]
 #     (the folder's manifest.json gives id, displayName, scope; its "helper" is kept)
 # Env: MEUM_WIDGETS_REPO (default ~/code/meum-widgets), MEUM_WIDGETS_GH (default mcurses/meum-widgets),
-#      MEUM_RELEASE_IDENTITY (default: the Developer ID Application in the keychain)
+#      MEUM_RELEASE_IDENTITY (default: the Developer ID Application in the keychain),
+#      MEUM_MIN_MEUM (the catalog's minMeum; default widgets/MINIMUM_MEUM, the release whose MeumKit last grew)
 set -eu
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$ROOT/build/widget-release"
@@ -65,6 +66,9 @@ find "$STAGE" -type f | while read -r f; do
   fi
 done
 ARCHS="$(lipo -archs "$STAGE/$LIBFILE")"
+# the signed library's hash: an installed copy that differs from it is not this version (exact update detection
+# even where meum doesn't know the installed version)
+LIBSHA="$(shasum -a 256 "$STAGE/$LIBFILE" | cut -d' ' -f1)"
 
 ZIP="$OUT/$FOLDER_NAME.zip"
 rm -f "$ZIP"
@@ -89,6 +93,7 @@ p = sys.argv[1]
 c = json.load(open(p)) if os.path.exists(p) else {"version": 1, "widgets": []}
 e = {"id": "$ID", "displayName": "$NAME", "description": """$DESC""", "author": "Max Studanski", "scope": "$SCOPE",
      "version": "$VERSION", "apiVersion": "meum.v1", "archs": "$ARCHS".split(), "url": "$URL", "sha256": "$SHA",
+     "librarySha256": "$LIBSHA", "minMeum": "${MEUM_MIN_MEUM:-$(cat "$ROOT/widgets/MINIMUM_MEUM")}",
      "helper": $( [ "$HAS_HELPER" = true ] && echo True || echo False )}
 c["widgets"] = [w for w in c["widgets"] if w["id"] != e["id"]] + [e]
 c["widgets"].sort(key=lambda w: w["displayName"].lower())

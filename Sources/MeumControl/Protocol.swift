@@ -8,6 +8,30 @@ public enum ControlInfo {
     /// Returned by `system.ping`. Bump only on breaking changes.
     public static let apiVersion = "meum.v1"
     public static let maxLineBytes = 16 * 1024 * 1024
+
+    /// The meum release this binary belongs to: the CFBundleShortVersionString of the app bundle around it (the
+    /// app's own executable, or bin/meum inside it). nil outside meum's bundle (swift build, tests).
+    public static let appVersion: String? = bundleVersion(around: Bundle.main.executablePath)
+
+    static let bundleID = "io.github.mcurses.meum"
+
+    static func bundleVersion(around path: String?) -> String? {
+        guard let path else { return nil }
+        var url = URL(fileURLWithPath: path).resolvingSymlinksInPath().deletingLastPathComponent()
+        while url.path != "/" && !url.path.isEmpty {
+            if url.lastPathComponent == "Contents",
+               let d = NSDictionary(contentsOf: url.appendingPathComponent("Info.plist")) {
+                // inside some other app (Xcode's test runner, say) this is not a meum release
+                guard d["CFBundleIdentifier"] as? String == bundleID else { return nil }
+                return d["CFBundleShortVersionString"] as? String
+            }
+            url.deleteLastPathComponent()
+        }
+        return nil
+    }
+
+    /// Every method this build answers, sorted (`system.ping` lists them, so a client can ask before it uses one).
+    public static var methods: [String] { (Array(MeumMethod.serverOwned) + MeumMethod.handlerOwned).sorted() }
 }
 
 public struct ControlError: Error, Equatable, Sendable, Codable, CustomStringConvertible {

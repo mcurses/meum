@@ -36,6 +36,18 @@ final class AgentTrackerTests: XCTestCase {
         XCTAssertNil(t.state(of: tab))
     }
 
+    /// After a restart: a restored idle state shows, a tab that already reported keeps its own, the next hook rules.
+    func testRestoreFillsOnlyTabsWithoutState() {
+        var t = AgentTracker()
+        t.apply(tab: "A", configDir: nil, payload: hook("UserPromptSubmit"), at: at(0))
+        XCTAssertNil(t.restore(tab: "A", state: AgentState(sessionID: "s1")))
+        XCTAssertEqual(t.state(of: "A")?.phase, .running)
+        XCTAssertEqual(t.restore(tab: "B", state: AgentState(sessionID: "s2"))?.phase, .idle)
+        XCTAssertEqual(t.summary(tabs: ["A", "B"]).live, 2)
+        t.apply(tab: "B", configDir: nil, payload: hook("UserPromptSubmit", sid: "s2"), at: at(1))
+        XCTAssertEqual(t.state(of: "B")?.phase, .running)
+    }
+
     func testEnvConfigDirWinsOverDerived() {
         var t = AgentTracker()
         t.apply(tab: tab, configDir: "/custom/dir", payload: hook("SessionStart"), at: at(0))

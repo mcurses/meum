@@ -18,6 +18,8 @@ final class AppControl {
     private(set) var server: ControlServer?
     /// The live settings (`settings.get` / `settings.set`); set by the app delegate.
     var settings: AppSettings?
+    /// Opens Settings at a section ("widgets"): where a refused trust request sends the user.
+    var onOpenSettings: ((String) -> Void)?
     /// The native widget host (`widget.list` / `widget.reload`); set by the app delegate, before its first reload.
     var widgets: WidgetManager? {
         didSet {
@@ -35,6 +37,11 @@ final class AppControl {
     private var branchTimer: Timer?
     private var portTimer: Timer?
     private var portScanRunning = false
+    private var silentTimer: Timer?
+    private var silentScanRunning = false
+    /// Tabs seen running claude with no hook state on the previous scan (a mark needs two scans in a row, so a
+    /// session that just started has time for its SessionStart hook).
+    private var silentCandidates: Set<UUID> = []
     private var branchWork: DispatchWorkItem?
     private let notifier: Notifier
 
@@ -79,14 +86,19 @@ final class AppControl {
             MainActor.assumeIsolated { self?.refreshBranches() }
         }
         refreshPorts()
+        restoreAgents()
         portTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.refreshPorts() }
+        }
+        silentTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshSilentAgents() }
         }
     }
 
     func stop() {
         branchTimer?.invalidate()
         portTimer?.invalidate()
+        silentTimer?.invalidate()
         server?.stop()
     }
 
@@ -143,15 +155,42 @@ final class AppControl {
             let sid = payload["session_id"]?.stringValue
             if reason != "other", let current, sid == nil || sid == current.sessionID {
                 controller.store.mutate(.cosmetic) { $0.updateTab(tabID) { $0.agent = nil } }
+            } else if let current, current.labels != nil, sid == nil || sid == current.sessionID {
+                // the snapshot stays for a resume, but an ended session shows no labels
+                controller.store.mutate(.cosmetic) { $0.updateTab(tabID) { $0.agent?.labels = nil } }
             }
         } else if let st = agents.state(of: tabID.uuidString) {
+            // the name is looked up off the main thread below; until then keep the one this session already had
+            let same = current?.sessionID == st.sessionID
+            let known = same ? current?.name : nil
+            // labels belong to the session: a new session in the tab starts without
             let snap = AgentSnapshot(sessionID: st.sessionID, configDir: st.configDir,
-                                     transcriptPath: st.transcriptPath, cwd: st.cwd)
+                                     transcriptPath: st.transcriptPath, cwd: st.cwd, name: known,
+                                     labels: same ? current?.labels : nil)
             if snap != current {
                 controller.store.mutate(.cosmetic) { $0.updateTab(tabID) { $0.agent = snap } }
             }
+            refreshSessionName(tab: tabID, sessionID: st.sessionID, configDir: st.configDir)
         }
         return result
+    }
+
+    private let nameQueue = DispatchQueue(label: "meum.session-names", qos: .utility)
+
+    /// Reads the session's name from Claude Code's record of it (it can change, e.g. on `/rename`) and stores it on
+    /// the tab's snapshot if the tab still holds that session.
+    private func refreshSessionName(tab: UUID, sessionID: String, configDir: String?) {
+        nameQueue.async { [weak self] in
+            let name = ClaudeSessionRecords.name(sessionID: sessionID, configDir: configDir)
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let self,
+                          let cur = self.controller.store.state.workspace(containingTab: tab)?.tab(tab)?.agent,
+                          cur.sessionID == sessionID, cur.name != name else { return }
+                    self.controller.store.mutate(.cosmetic) { $0.updateTab(tab) { $0.agent?.name = name } }
+                }
+            }
+        }
     }
 
     // MARK: notifications
@@ -197,6 +236,62 @@ final class AppControl {
     }
 
     /// Listening TCP ports of each workspace's tab processes (their zmx sessions' process trees), off the main thread.
+    /// After a restart the tracker knows no session until its next hook. A tab with a Claude snapshot whose zmx
+    /// session still runs a `claude` process gets its dot back at once (idle, read); the next hook corrects it.
+    func restoreAgents() {
+        let sessions = controller.sessions
+        let candidates: [(UUID, String, AgentSnapshot)] = controller.store.state.workspaces.flatMap { ws in
+            ws.allTabs.compactMap { t in t.agent.map { (t.id, sessions.name(for: t.id), $0) } }
+        }
+        guard !candidates.isEmpty else { return }
+        let service = agents
+        DispatchQueue.global(qos: .utility).async {
+            let pids = sessions.pids()
+            let parents = ListeningPorts.parents()
+            let now = Date().timeIntervalSince1970
+            var restored: [String: AgentState] = [:]
+            for (tab, name, snap) in candidates {
+                guard let root = pids[name],
+                      ListeningPorts.tree(of: root, parents: parents).contains(where: { ListeningPorts.name(of: $0) == "claude" })
+                else { continue }
+                restored[tab.uuidString] = AgentState(sessionID: snap.sessionID, configDir: snap.configDir,
+                                                      transcriptPath: snap.transcriptPath, cwd: snap.cwd,
+                                                      phase: .idle, unread: false, updatedAt: now)
+            }
+            Log.info("agents: restored \(restored.count) of \(candidates.count) Claude session(s) after launch")
+            service.restore(restored)
+        }
+    }
+
+    /// Marks tabs where claude runs but meum has heard no hook from it (hooks not installed in that profile, the
+    /// script missing, or a claude started before the hooks were): the tab shows a hollow dot that says so.
+    func refreshSilentAgents() {
+        guard !silentScanRunning else { return }
+        silentScanRunning = true
+        let sessions = controller.sessions
+        let tabs: [(UUID, String)] = controller.store.state.workspaces.flatMap { ws in
+            ws.allTabs.map { ($0.id, sessions.name(for: $0.id)) }
+        }
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let pids = sessions.pids()
+            let parents = ListeningPorts.parents()
+            let running = Set(tabs.compactMap { tab, name -> UUID? in
+                guard let root = pids[name] else { return nil }
+                return ListeningPorts.tree(of: root, parents: parents).contains { ListeningPorts.name(of: $0) == "claude" } ? tab : nil
+            })
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.silentScanRunning = false
+                    let unheard = Set(running.filter { self.agents.state(of: $0.uuidString) == nil })
+                    let silent = unheard.intersection(self.silentCandidates)
+                    self.silentCandidates = unheard
+                    if silent != self.controller.silentAgentTabs { self.controller.silentAgentTabs = silent }
+                }
+            }
+        }
+    }
+
     func refreshPorts() {
         guard !portScanRunning else { return }
         portScanRunning = true

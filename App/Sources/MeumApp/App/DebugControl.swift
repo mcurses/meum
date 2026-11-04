@@ -37,6 +37,7 @@ final class DebugControl {
     let control: AppControl?
     /// Set by the app delegate.
     var settingsWindow: SettingsWindowController?
+    var help: HelpWindowController?
     /// Links a status click would have opened (the debug instance opens nothing).
     var openedURLs: [String] = []
     private var timer: Timer?
@@ -294,6 +295,21 @@ final class DebugControl {
                 throw Failure(description: "event")
             }
             w.sendEvent(ev)
+        case "scroll":
+            // scroll X Y DY: a scroll wheel event (pixels, positive scrolls the content down) at container
+            // coordinates (top-left origin), handed to the view under that point
+            guard args.count >= 3, let x = Double(args[0]), let y = Double(args[1]), let dy = Int32(args[2]) else {
+                throw Failure(description: "need X Y DY")
+            }
+            let w = controller.window
+            let screenH = NSScreen.screens.first?.frame.height ?? 0
+            guard let cg = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: -dy, wheel2: 0, wheel3: 0)
+            else { throw Failure(description: "event") }
+            cg.location = CGPoint(x: w.frame.minX + x, y: screenH - (w.frame.maxY - y))
+            guard let ev = NSEvent(cgEvent: cg),
+                  let v = w.contentView?.hitTest(w.contentView!.convert(NSPoint(x: x, y: w.frame.height - y), from: nil))
+            else { throw Failure(description: "no view there") }
+            v.scrollWheel(with: ev)
         case "post-click":
             // post-click X Y: mouse down and up queued with NSApp.postEvent, the path real clicks take (local
             // event monitors see it; `click` sends to the window directly and skips them)
@@ -307,13 +323,14 @@ final class DebugControl {
                 NSApp.postEvent(ev, atStart: false)
             }
         case "click":
-            // click X Y [right]: mouse down and up at container coordinates (top-left origin). The up is queued
-            // before the down is sent, so a control's tracking loop (buttons, menus) finds it and returns.
+            // click X Y [right] [settings]: mouse down and up at container coordinates (top-left origin), in the main
+            // window or the settings window. The up is queued before the down is sent, so a control's tracking loop
+            // (buttons, menus) finds it and returns.
             guard args.count >= 2, let x = Double(args[0]), let y = Double(args[1]) else {
-                throw Failure(description: "need X Y [right]")
+                throw Failure(description: "need X Y [right] [settings]")
             }
-            let right = args.count > 2 && args[2] == "right"
-            let w = controller.window
+            let right = args.contains("right")
+            let w = args.contains("settings") ? (settingsWindow?.debugWindow ?? controller.window) : controller.window
             let loc = NSPoint(x: x, y: w.frame.height - y)
             func ev(_ t: NSEvent.EventType) -> NSEvent? {
                 NSEvent.mouseEvent(with: t, location: loc, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
@@ -451,7 +468,16 @@ final class DebugControl {
             },
             "mainScreenHeight": NSScreen.screens.first?.frame.height ?? 0,
             "settingsWindow": settingsWindow?.isVisible ?? false,
+            "updates": ["count": settingsWindow?.updates?.count ?? 0, "widgets": settingsWindow?.updates?.widgetUpdates ?? [],
+                        "app": settingsWindow?.updates?.appUpdate ?? ""] as [String: Any],
             "settingsWindowNumber": settingsWindow?.windowNumber ?? 0,
+            "helpWindowNumber": help?.windowNumber ?? 0,
+            "startHint": {
+                let h = controller.tipsCard
+                guard !h.isHidden else { return [CGFloat]() }
+                let r = h.convert(h.bounds, to: controller.root)
+                return [r.minX, r.minY, r.width, r.height]
+            }(),
             "cornerRadius": controller.sidebarCard.glass.radius,
             "catchClicks": controller.root.catchClicks,
             "renameFieldOpen": controller.sidebarCard.sidebar.renameField != nil,
@@ -462,6 +488,7 @@ final class DebugControl {
                 let r = controller.sidebarCard.sidebar.convert(h.0, to: controller.root)
                 return ["key": h.2, "frame": [r.minX, r.minY, r.width, r.height]]
             },
+            "sidebarTips": controller.sidebarCard.sidebar.tipRects.map { $0.1 },
             "sidebarRows": {
                 let sb = controller.sidebarCard.sidebar
                 return zip(sb.rows, sb.frames).map { row, f -> [String: Any] in

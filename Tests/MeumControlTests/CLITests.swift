@@ -35,9 +35,14 @@ final class CLITests: XCTestCase {
     func testPingAndVersionAndHelp() {
         let r = meum(["ping"])
         XCTAssertEqual(r.code, 0)
-        XCTAssertTrue(r.out.hasPrefix("ok meum.v1 pid "), r.out)
+        XCTAssertTrue(r.out.hasPrefix("ok meum ? (meum.v1) pid "), r.out)
+        XCTAssertTrue(r.out.hasSuffix("\(ControlInfo.methods.count) methods\n") || r.out.hasSuffix("\(ControlInfo.methods.count) methods"), r.out)
         let j = meum(["--json", "ping"])
-        XCTAssertEqual(try JSON.parse(j.out)["api"], "meum.v1")
+        let pj = try? JSON.parse(j.out)
+        XCTAssertEqual(pj?["api"], "meum.v1")
+        XCTAssertEqual(pj?["version"], .null, "a test binary sits in no app bundle")
+        let methods = pj?["methods"]?.arrayValue?.compactMap(\.stringValue) ?? []
+        XCTAssertTrue(methods.contains("system.ping") && methods.contains("tab.paste") && methods.contains("events.subscribe"), "\(methods)")
         XCTAssertEqual(meum(["ping", "--json"]).code, 0, "--json works after the command too")
         XCTAssertTrue(meum(["version"]).out.contains("meum.v1"))
         XCTAssertTrue(meum(["help"]).out.contains("usage: meum"))
@@ -268,6 +273,43 @@ final class CLITests: XCTestCase {
         XCTAssertEqual(TestSupport.read(a + "/settings.json"), beforeA)
     }
 
+    func testSubcommandHelpPrintsThatCommandsLines() {
+        var r = meum(["tab", "--help"], socket: false)
+        XCTAssertEqual(r.code, 0)
+        XCTAssertTrue(r.out.contains("tab paste [--submit]"), r.out)
+        XCTAssertFalse(r.out.contains("workspace list"), r.out)
+        r = meum(["tab", "new", "-h"], socket: false)
+        XCTAssertTrue(r.out.contains("tab new [--workspace WS]"), r.out)
+        XCTAssertFalse(r.out.contains("tab paste"), r.out)
+        r = meum(["hooks", "install", "--help"], socket: false)
+        XCTAssertTrue(r.out.contains("hooks status|install|uninstall"), r.out)
+        XCTAssertTrue(meum(["help"], socket: false).out.contains("claude mcp add --scope user meum"))
+    }
+
+    /// Without --script, install copies the meum-hook shipped next to the running meum (a fresh Mac has none).
+    func testHooksInstallCopiesTheBundledScriptByDefault() throws {
+        let a = writeSettings(".claude", "{}\n")
+        let bin = home + "/app/bin"
+        try FileManager.default.createDirectory(atPath: bin, withIntermediateDirectories: true)
+        TestSupport.write("#!/bin/sh\n# v2\nexit 0\n", to: bin + "/meum-hook")
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bin + "/meum-hook")
+        TestSupport.write("", to: bin + "/meum")
+        let o = Locked<[String]>([])
+        let env = CLIEnvironment(env: ["HOME": home], home: home, stdout: { s in o.mutate { $0.append(s) } },
+                                 stderr: { _ in }, readStdin: { "" }, executable: bin + "/meum")
+        XCTAssertEqual(CLI.run(["hooks", "install", "--config-dir", a, "--yes"], environment: env), 0, o.value.joined())
+        let dest = home + "/.local/bin/meum-hook"
+        XCTAssertTrue(FileManager.default.isExecutableFile(atPath: dest))
+        XCTAssertEqual(TestSupport.read(dest), "#!/bin/sh\n# v2\nexit 0\n")
+
+        // refresh: unchanged copy is left alone, an old one is replaced
+        let installer = HookInstaller(home: home)
+        XCTAssertFalse(try installer.refreshScript(from: bin + "/meum-hook"))
+        TestSupport.write("old", to: dest)
+        XCTAssertTrue(try installer.refreshScript(from: bin + "/meum-hook"))
+        XCTAssertEqual(TestSupport.read(dest), "#!/bin/sh\n# v2\nexit 0\n")
+    }
+
     func testHooksInstallReportsErrorsAndExitsNonZero() {
         let bad = writeSettings(".claude-bad", "{ nope")
         let r = meum(["hooks", "install", "--config-dir", bad, "--yes"])
@@ -302,7 +344,7 @@ final class CLITests: XCTestCase {
         let env = ["HOME": home!, "MEUM_SOCKET": h.socket, "PATH": "/usr/bin:/bin"]
         let ping = TestSupport.run(bin, ["ping"], env: env)
         XCTAssertEqual(ping.status, 0, ping.stderr)
-        XCTAssertTrue(ping.stdout.hasPrefix("ok meum.v1"), ping.stdout)
+        XCTAssertTrue(ping.stdout.hasPrefix("ok meum ? (meum.v1)"), ping.stdout)
         let tree = TestSupport.run(bin, ["tree"], env: env)
         XCTAssertTrue(tree.stdout.contains("needs input"), tree.stdout)
         let sent = TestSupport.run(bin, ["tab", "send", "--enter", "AAAA", "echo hi"], env: env)

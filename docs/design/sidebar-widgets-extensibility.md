@@ -217,8 +217,9 @@ Dropped from Tamago when it runs in meum:
   `meum_notify`. Whether to reuse a widget tab or open a new one is the session's call; `meum_context` lists the
   workspace's widget tabs with their settings. Install: the `meum` plugin in this repo (a local directory marketplace), once per
   profile: `CLAUDE_CONFIG_DIR=~/.claude-<profile> claude plugin marketplace add ~/code/meum` then
-  `... claude plugin install meum@meum --scope user`. It starts `/Applications/meum.app/Contents/Resources/bin/meum mcp`
-  (`MEUM_CLI` overrides that path) and holds no secret. After a change to `plugin/`, run
+  `... claude plugin install meum@meum --scope user`. It starts `$MEUM_CLI mcp`; meum sets `MEUM_CLI` in every tab
+  to its own bundled CLI, so an app outside /Applications works too (without it, as in a tab started by an older
+  meum, `/Applications/meum.app/Contents/Resources/bin/meum`). It holds no secret. After a change to `plugin/`, run
   `claude plugin marketplace update meum && claude plugin update meum@meum` in each profile.
 - **The browser widget** (`widgets/browser`, tile scope) is not part of meum, but a separate widget built with
   `scripts/build-widget.sh widgets/browser BrowserWidget io.github.mcurses.meum.browser Browser tile`.

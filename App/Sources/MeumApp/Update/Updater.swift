@@ -4,7 +4,7 @@
 //            CFBundleShortVersionString with a "-<arch>.dmg" asset is an update.
 //   install: download the DMG, mount it read-only, ditto its meum.app next to the running one, verify that copy
 //            (valid signature from the Developer ID team, our bundle id, a newer version), swap it in place
-//            (the old copy is kept until the new one is in position), relaunch.
+//            with one atomic exchange (never a moment without an app there), relaunch.
 //
 // Only release builds update themselves: the running app must itself be signed by the team. Builds from source
 // (local or ad-hoc signature) report "not a release build". A relaunch keeps every terminal: the zmx sessions
@@ -51,7 +51,9 @@ final class Updater {
     private var timer: Timer?
     private(set) var busy = false
     /// Last check: the newer release, if any.
-    private(set) var available: Release?
+    private(set) var available: Release? { didSet { if available != oldValue { onAvailable?(available?.version) } } }
+    /// Told the newer version (or nil) after each check: the update center's dot.
+    var onAvailable: ((String?) -> Void)?
     /// Progress for the settings window and the API: (fraction or nil, text).
     var onProgress: ((Double?, String) -> Void)?
     /// Asked before an automatic offer is shown; the settings switch.
@@ -214,17 +216,14 @@ final class Updater {
         }
 
         onProgress?(0.9, "Installing \(r.version)…")
-        let old = parent.appendingPathComponent(".\(target.lastPathComponent).old-\(getpid())")
-        try? FileManager.default.removeItem(at: old)
-        try FileManager.default.moveItem(at: target, to: old)
-        do {
-            try FileManager.default.moveItem(at: staged, to: target)
-        } catch {
-            try? FileManager.default.moveItem(at: old, to: target)   // roll back
+        // one atomic exchange: there is never a moment without an app at `target` (a tab starting right then
+        // would not find meum's zmx), and a failure leaves the old version in place
+        guard renamex_np(staged.path, target.path, UInt32(RENAME_SWAP)) == 0 else {
+            let msg = String(cString: strerror(errno))
             try? FileManager.default.removeItem(at: staged)
-            throw Failure.bad("could not put the new version in place: \(error)")
+            throw Failure.bad("could not put the new version in place: \(msg)")
         }
-        try? FileManager.default.removeItem(at: old)
+        try? FileManager.default.removeItem(at: staged)   // now the old version
         Log.info("updated to \(r.version) at \(target.path)")
         onProgress?(1, "Installed \(r.version)")
         if relaunch { self.relaunch(target) }

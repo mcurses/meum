@@ -28,7 +28,9 @@ public enum MCPServer {
     it says which workspace and tab you are in, which widgets are installed, and which widget tabs your workspace \
     already has. You decide whether to reuse an existing widget tab (meum_widget_send, e.g. {"navigate": URL}) or \
     open a new one (meum_open_widget). Opening one in your own workspace is fine without asking; it never takes \
-    the keyboard from the user. To check what a widget shows (e.g. a page you built), use meum_widget_screenshot.
+    the keyboard from the user. To check what a widget shows (e.g. a page you built), use meum_widget_screenshot. \
+    meum_set_labels puts short labels on your own tab (what you do here), and meum_set_workspace changes your \
+    workspace's name, icon and colour.
     """
 
     static func schema(_ props: [String: JSON], required: [String] = []) -> JSON {
@@ -68,6 +70,15 @@ public enum MCPServer {
             "color": ["type": "string", "description": "#rrggbb"], "url": ["type": "string"],
             "workspace": ["type": "string"],
          ], required: ["key", "value"])],
+        ["name": "meum_set_labels",
+         "description": "Attach short labels to your own session (e.g. what you do here); meum shows them as chips on your tab. At most 4, each at most 24 characters; an empty list removes them. They go away when your session ends.",
+         "inputSchema": schema(["labels": ["type": "array", "items": ["type": "string"]]], required: ["labels"])],
+        ["name": "meum_set_workspace",
+         "description": "Change your own workspace's name, icon, colour or sidebar labels (only the fields you pass). icon: preferably an SF Symbol as sf:<name> (e.g. sf:hammer, sf:leaf; calmer than emoji), else up to two characters; \"none\" removes it. color: #rrggbb, or \"none\". labels: chips on the workspace's sidebar row (at most 4, 24 characters each; [] removes them), about the workspace as a whole, not about your session.",
+         "inputSchema": schema([
+            "name": ["type": "string"], "icon": ["type": "string"], "color": ["type": "string"],
+            "labels": ["type": "array", "items": ["type": "string"]],
+         ])],
         ["name": "meum_notify",
          "description": "A macOS notification from meum; a click takes the user to your tab.",
          "inputSchema": schema(["title": ["type": "string"], "body": ["type": "string"]], required: ["title"])],
@@ -145,6 +156,19 @@ public enum MCPServer {
             if let u = s("url") { p["url"] = .string(u) }
             _ = try call(MeumMethod.statusSet, .object(p))
             return text("ok")
+        case "meum_set_labels":
+            guard let t = here.tab else { throw ControlError.unavailable("not inside a meum tab") }
+            let labels = a["labels"]?.arrayValue ?? []
+            return text(try call(MeumMethod.tabSetLabels, ["tab": .string(t), "labels": .array(labels)]))
+        case "meum_set_workspace":
+            guard let w = here.workspace else { throw ControlError.unavailable("not inside a meum workspace") }
+            var done: [String] = []
+            if let n = s("name") { _ = try call(MeumMethod.workspaceRename, ["id": .string(w), "name": .string(n)]); done.append("name") }
+            if let i = s("icon") { _ = try call(MeumMethod.workspaceSetIcon, ["id": .string(w), "icon": i == "none" ? .null : .string(i)]); done.append("icon") }
+            if let c = s("color") { _ = try call(MeumMethod.workspaceSetColor, ["id": .string(w), "color": c == "none" ? .null : .string(c)]); done.append("color") }
+            if let l = a["labels"]?.arrayValue { _ = try call(MeumMethod.workspaceSetLabels, ["id": .string(w), "labels": .array(l)]); done.append("labels") }
+            guard !done.isEmpty else { throw ControlError.invalidParams("pass name, icon, color or labels") }
+            return text(.string("set " + done.joined(separator: ", ")))
         case "meum_notify":
             var p: [String: JSON] = ["title": .string(try need("title"))]
             if let b = s("body") { p["body"] = .string(b) }

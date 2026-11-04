@@ -10,11 +10,14 @@ public struct CLIEnvironment {
     public var stdout: (String) -> Void
     public var stderr: (String) -> Void
     public var readStdin: () -> String
+    /// The running `meum` executable; `hooks install` copies the `meum-hook` next to it by default.
+    public var executable: String?
 
     public init(env: [String: String], home: String, stdout: @escaping (String) -> Void,
-                stderr: @escaping (String) -> Void, readStdin: @escaping () -> String) {
+                stderr: @escaping (String) -> Void, readStdin: @escaping () -> String, executable: String? = nil) {
         self.env = env
         self.home = home
+        self.executable = executable
         self.stdout = stdout
         self.stderr = stderr
         self.readStdin = readStdin
@@ -25,7 +28,8 @@ public struct CLIEnvironment {
             env: ProcessInfo.processInfo.environment, home: NSHomeDirectory(),
             stdout: { FileHandle.standardOutput.write(Data(($0 + "\n").utf8)) },
             stderr: { FileHandle.standardError.write(Data(($0 + "\n").utf8)) },
-            readStdin: { String(decoding: FileHandle.standardInput.readDataToEndOfFile(), as: UTF8.self) })
+            readStdin: { String(decoding: FileHandle.standardInput.readDataToEndOfFile(), as: UTF8.self) },
+            executable: Bundle.main.executablePath)
     }
 }
 
@@ -38,7 +42,7 @@ public enum CLI {
     Talk to the running meum app over its control socket ($MEUM_SOCKET, else ~/.local/state/meum/meum.sock).
 
     commands:
-      ping                                    check the server, print the API version
+      ping                                    check the server: its meum version, API version and pid
       tree                                    workspaces, cards, tabs and agent state
       workspace list
       workspace new [name] [--cwd DIR] [--color HEX]
@@ -48,9 +52,12 @@ public enum CLI {
       workspace meta [list] [--workspace WS]  the workspace's key/value labels
       workspace meta set <key> <value> [--workspace WS]   set one ("board.project acme/shop")
       workspace meta unset <key> [--workspace WS]
+      workspace labels [<label>...|none] [--workspace WS]
+                                              chips on the workspace's sidebar row (at most 4);
+                                              without labels prints them, "none" removes them
       workspace icon <ICON|none> [--workspace WS]
-                                              the icon in the collapsed sidebar: an emoji or up to two
-                                              characters ("🚀", "vi"), or sf:<SF Symbol> ("sf:leaf")
+                                              the icon in the collapsed sidebar: preferably an SF Symbol
+                                              (sf:<name>, e.g. "sf:leaf"), else up to two characters ("vi")
       workspace pin <ws> [--off]
       workspace reorder <ws> <index>
       workspace read|unread <ws>              mark a workspace read / unread
@@ -60,9 +67,13 @@ public enum CLI {
                                               --config: its settings (e.g. '{"url":"http://localhost:5173"}')
       tab select|close <tab>
       tab send [--enter] <tab> <text|->       type text into a tab ('-' reads stdin)
-      tab paste <tab> <text|->                paste text into a tab's terminal (bracketed paste; nothing
-                                              is submitted; works in hidden workspaces)
+      tab paste [--submit] <tab> <text|->     paste text into a tab's terminal (bracketed paste; works in
+                                              hidden workspaces); --submit presses Return after it
       tab focused                             the selected workspace's focused tab
+      tab labels [<label>...|none] [--tab TAB]
+                                              short labels on this tab's Claude session (chips on the tab;
+                                              at most 4, 24 characters each); without labels prints them,
+                                              "none" removes them
       tab move <tab> [--card CARD] [--index N] [--split left|right|up|down]
                                               move a tab into a card at a position (default: its own card,
                                               at the end), or split CARD and put the tab in the new card
@@ -85,12 +96,12 @@ public enum CLI {
       widget catalog                          the widget library: what can be installed, what has updates
       widget install|update <id>              install a widget from the library (or its newer version)
       widget remove <id> [--data]             remove a widget (--data: also its data folder)
-      widget allow <id>                       trust a widget that is not from the library (pins its file)
+      widget allow <id>                       gone: trust a widget with Allow in Settings ▸ Widgets
       widget send <tab> <json>                send a widget tab a message and print its reply
                                               (--widget ID instead of a tab: a sidebar widget)
       widget screenshot <tab> [--out FILE]    a PNG of a widget tab (default FILE: widget-<tab>.png)
       mcp                                     run the meum MCP server on stdio (for Claude Code:
-                                              claude mcp add meum -- meum mcp)
+                                              claude mcp add --scope user meum -- meum mcp)
       status set <key> <value> [--workspace WS] [--color HEX] [--url URL]
                                               --url: a click on the entry opens it (any scheme)
       status clear <key> [--workspace WS]
@@ -107,9 +118,43 @@ public enum CLI {
     Inside a meum tab $MEUM_WORKSPACE and $MEUM_TAB are the defaults where a workspace or tab is optional.
     """
 
-    public static let version = "meum 0.1 (api \(ControlInfo.apiVersion))"
+    public static let version = "meum \(ControlInfo.appVersion ?? "(development build)") (api \(ControlInfo.apiVersion))"
+
+    /// `meum version`: this CLI's meum, and the running meum's when it differs (an app updated but not restarted).
+    static func versionText(_ ctx: inout Ctx) -> String {
+        guard let r = try? ctx.rpc(MeumMethod.ping) else { return version }
+        let running = r["version"]?.stringValue
+        if running == ControlInfo.appVersion { return version }
+        let line = "the running meum is " + (running ?? "older than 0.5 (it doesn't say)")
+        return version + "\n" + line + (ControlInfo.appVersion == nil ? "" : "; restart it to use this one")
+    }
 
     @discardableResult
+    /// The usage lines of one command (`["tab"]`, `["tab", "new"]`) with their continuation lines; nil when none match.
+    static func commandUsage(_ words: [String]) -> String? {
+        let prefix = words.joined(separator: " ")
+        var out: [String] = [], inBlock = false
+        for line in usage.split(separator: "\n", omittingEmptySubsequences: false).map(String.init) {
+            let trimmed = line.drop { $0 == " " }
+            let indent = line.count - trimmed.count
+            if indent == 2 {
+                // a command line: "tab new …", or one naming alternatives ("tab select|close", "hooks status|install|…")
+                let head = trimmed.split(separator: " ").prefix(words.count).map(String.init)
+                inBlock = head.count == words.count && zip(head, words).allSatisfy { h, w in
+                    h == w || h.split(separator: "|").contains(Substring(w))
+                }
+                if inBlock { out.append(line) }
+            } else if inBlock, indent > 2 {
+                out.append(line)
+            } else {
+                inBlock = false
+            }
+        }
+        guard !out.isEmpty else { return nil }
+        return "usage: meum " + prefix + " …\n\n" + out.joined(separator: "\n")
+            + "\n\nmeum help: every command."
+    }
+
     public static func run(_ args: [String], environment: CLIEnvironment = .live) -> Int32 {
         do {
             try dispatch(args, Ctx(env: environment))
@@ -173,10 +218,15 @@ public enum CLI {
         _ = try parse(&ctx, lead)
         guard let cmd = args.first else { ctx.out(usage); return }
         let rest = Array(args.dropFirst())
+        // `meum tab --help`, `meum tab new -h`: that command's lines of the usage
+        if cmd != "help", rest.contains(where: { $0 == "--help" || $0 == "-h" }) {
+            let words = [cmd] + rest.prefix { !$0.hasPrefix("-") }.prefix(1)
+            if let text = commandUsage(words) ?? commandUsage([cmd]) { ctx.out(text); return }
+        }
 
         switch cmd {
         case "help", "--help", "-h": ctx.out(usage)
-        case "version", "--version": ctx.out(version)
+        case "version", "--version": ctx.out(versionText(&ctx))
         case "ping": try ping(&ctx, rest)
         case "tree": try tree(&ctx, rest)
         case "workspace", "ws": try workspace(&ctx, rest)
@@ -218,7 +268,9 @@ public enum CLI {
         let p = try parse(&ctx, args)
         try p.expectPositionals([], command: "meum ping")
         let r = try ctx.rpc(MeumMethod.ping)
-        ctx.show(r) { "ok \(($0["api"]?.stringValue) ?? "?") pid \($0["pid"]?.intValue.map(String.init) ?? "?")" }
+        ctx.show(r) {
+            "ok meum \($0["version"]?.stringValue ?? "?") (\($0["api"]?.stringValue ?? "?")) pid \($0["pid"]?.intValue.map(String.init) ?? "?"), \($0["methods"]?.arrayValue?.count ?? 0) methods"
+        }
     }
 
     static func tree(_ ctx: inout Ctx, _ args: [String]) throws {
@@ -363,7 +415,7 @@ public enum CLI {
     // MARK: workspace
 
     static func workspace(_ ctx: inout Ctx, _ args: [String]) throws {
-        guard let sub = args.first else { throw CLIError.usage("usage: meum workspace list|new|select|rename|close|color|icon|pin|reorder|read|unread") }
+        guard let sub = args.first else { throw CLIError.usage("usage: meum workspace list|new|select|rename|close|color|icon|labels|pin|reorder|read|unread") }
         let rest = Array(args.dropFirst())
         switch sub {
         case "list", "ls":
@@ -395,6 +447,18 @@ public enum CLI {
             let id = try resolveWorkspace(ctx, p.positionals[0])
             let c = p.positionals[1]
             printOK(ctx, try ctx.rpc(MeumMethod.workspaceSetColor, ["id": .string(id), "color": c == "none" ? .null : .string(c)]))
+        case "labels":
+            let p = try parse(&ctx, rest, values: ["workspace"])
+            guard let ws = try workspaceRef(ctx, p) else { throw CLIError.usage("--workspace is required outside a meum tab") }
+            // no labels: print them; "none" clears them
+            var params: [String: JSON] = ["id": .string(ws)]
+            if !p.positionals.isEmpty {
+                params["labels"] = .array((p.positionals == ["none"] ? [] : p.positionals).map { .string($0) })
+            }
+            ctx.show(try ctx.rpc(MeumMethod.workspaceSetLabels, .object(params))) { r in
+                let l = r["labels"]?.arrayValue?.compactMap(\.stringValue) ?? []
+                return l.isEmpty ? "no labels" : l.joined(separator: " ")
+            }
         case "icon":
             let p = try parse(&ctx, rest, values: ["workspace"])
             try p.expectPositionals(["ICON|none"], command: "meum workspace icon")
@@ -452,7 +516,7 @@ public enum CLI {
     // MARK: tab
 
     static func tab(_ ctx: inout Ctx, _ args: [String]) throws {
-        guard let sub = args.first else { throw CLIError.usage("usage: meum tab new|select|close|send") }
+        guard let sub = args.first else { throw CLIError.usage("usage: meum tab new|select|close|send|paste|labels|focused") }
         let rest = Array(args.dropFirst())
         switch sub {
         case "new":
@@ -486,11 +550,29 @@ public enum CLI {
             if p.has("enter") { text += "\r" }
             printOK(ctx, try ctx.rpc(MeumMethod.tabSendText, ["tab": .string(id), "text": .string(text)]))
         case "paste":
-            let p = try parse(&ctx, rest)
-            try p.expectPositionals(["tab", "text"], command: "meum tab paste")
+            let p = try parse(&ctx, rest, bools: ["submit"])
+            try p.expectPositionals(["tab", "text"], command: "meum tab paste [--submit]")
             let id = try resolveTab(ctx, p.positionals[0])
             let text = p.positionals[1] == "-" ? ctx.env.readStdin() : p.positionals[1]
-            printOK(ctx, try ctx.rpc(MeumMethod.tabPaste, ["tab": .string(id), "text": .string(text)]))
+            var params: [String: JSON] = ["tab": .string(id), "text": .string(text)]
+            if p.has("submit") { params["submit"] = .bool(true) }
+            printOK(ctx, try ctx.rpc(MeumMethod.tabPaste, .object(params)))
+        case "labels":
+            // meum tab labels <label>... | none [--tab TAB]; inside a meum tab the tab defaults to $MEUM_TAB
+            let p = try parse(&ctx, rest, values: ["tab"])
+            guard let t = p.value("tab") ?? ctx.env.env["MEUM_TAB"], !t.isEmpty else {
+                throw CLIError.usage("meum tab labels <label>...|none --tab TAB (outside a meum tab)")
+            }
+            let id = try resolveTab(ctx, t)
+            // no labels: print them; "none" clears them
+            var params: [String: JSON] = ["tab": .string(id)]
+            if !p.positionals.isEmpty {
+                params["labels"] = .array((p.positionals == ["none"] ? [] : p.positionals).map { .string($0) })
+            }
+            ctx.show(try ctx.rpc(MeumMethod.tabSetLabels, .object(params))) { r in
+                let l = r["labels"]?.arrayValue?.compactMap(\.stringValue) ?? []
+                return l.isEmpty ? "no labels" : l.joined(separator: " ")
+            }
         case "focused":
             let p = try parse(&ctx, rest)
             try p.expectPositionals([], command: "meum tab focused")
@@ -608,7 +690,7 @@ public enum CLI {
             ctx.show(try ctx.rpc(MeumMethod.widgetCatalog)) { r in
                 var lines = ["catalog: \(r["url"]?.stringValue ?? "?")"]
                 for w in r["widgets"]?.arrayValue ?? [] {
-                    let state = w["runs"]?.boolValue == false ? "not for this meum"
+                    let state = w["runs"]?.boolValue == false ? (w["needsMeum"]?.stringValue.map { "needs meum \($0)" } ?? "not for this meum")
                         : w["update"]?.boolValue == true ? "update \(w["installedVersion"]?.stringValue ?? "?") -> \(w["version"]?.stringValue ?? "?")"
                         : w["installed"]?.boolValue == true ? "installed" : "available"
                     lines.append("\(w["id"]?.stringValue ?? "?")  \(w["displayName"]?.stringValue ?? "")  \(w["version"]?.stringValue ?? "")  [\(state)]")
@@ -738,10 +820,19 @@ public enum CLI {
 
         if sub == "status" {
             let sts = targets.map { installer.status(of: $0) }
+            let own = p.value("script") ?? HookInstaller.bundledScript(nextTo: ctx.env.executable)
+            let script = installer.scriptState(comparedTo: own)
             if ctx.json {
-                ctx.out(JSON.array(sts.map(statusJSON)).prettyString)
+                ctx.out(JSON.array(sts.map { s in
+                    guard case .object(var o) = statusJSON(s) else { return statusJSON(s) }
+                    o["script"] = .string(script.rawValue)
+                    return .object(o)
+                }).prettyString)
             } else {
                 for s in sts { ctx.out(statusLine(s)) }
+                // the script only matters where hooks call it
+                if sts.contains(where: { !$0.installedEvents.isEmpty }),
+                   let line = scriptLine(script, path: installer.scriptDestination) { ctx.out(line) }
             }
             return
         }
@@ -787,7 +878,13 @@ public enum CLI {
             results.append(.object(entry))
         }
 
-        if action == .install, let script = p.value("script") {
+        // the script the hooks call: --script, else the one shipped next to this meum
+        let script = p.value("script") ?? HookInstaller.bundledScript(nextTo: ctx.env.executable)
+        if action == .install, script == nil, let dest = installer.scriptDestination,
+           !FileManager.default.fileExists(atPath: dest) {
+            ctx.env.stderr("meum: no meum-hook next to this meum to copy to \(dest); pass --script PATH")
+        }
+        if action == .install, let script {
             if let dest = installer.scriptDestination {
                 if yes {
                     do { _ = try installer.installScript(from: script); if !ctx.json { ctx.out("script: copied to \(dest)") } }
@@ -819,6 +916,17 @@ public enum CLI {
         ]
         if let e = s.error { o["error"] = .string(e) }
         return .object(o)
+    }
+
+    static func scriptLine(_ s: HookInstaller.ScriptState, path: String?) -> String? {
+        guard let path else { return nil }
+        switch s {
+        case .current: return "script \(path): current"
+        case .differs: return "script \(path): differs from this meum's copy; `meum hooks install --yes` replaces it"
+        case .missing: return "script \(path): MISSING, so the hooks run nothing and meum hears nothing; `meum hooks install --yes`"
+        case .notExecutable: return "script \(path): not executable; `meum hooks install --yes`"
+        case .unchecked: return "script \(path): present (no copy of meum's to compare with)"
+        }
     }
 
     public static func statusLine(_ s: HookInstaller.Status) -> String {

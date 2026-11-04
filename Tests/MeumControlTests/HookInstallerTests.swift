@@ -409,6 +409,24 @@ final class HookInstallerTests: XCTestCase {
         XCTAssertEqual(found, [".claude", ".claude-spare", ".claude-work"])
     }
 
+    func testScriptStateComparesTheInstalledCopy() throws {
+        let home = temp()
+        var i = HookInstaller(hookCommand: "$HOME/.local/bin/meum-hook", home: home)
+        let src = home + "/src-hook"
+        TestSupport.write("#!/bin/sh\nexit 0\n", to: src)
+        XCTAssertEqual(i.scriptState(comparedTo: src), .missing)
+        let dest = try i.installScript(from: src)
+        XCTAssertEqual(i.scriptState(comparedTo: src), .current)
+        XCTAssertEqual(i.scriptState(comparedTo: nil), .unchecked)
+        TestSupport.write("#!/bin/sh\necho old\n", to: dest)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dest)
+        XCTAssertEqual(i.scriptState(comparedTo: src), .differs)
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: dest)
+        XCTAssertEqual(i.scriptState(comparedTo: src), .notExecutable)
+        i.hookCommand = "sh -c something"
+        XCTAssertEqual(i.scriptState(comparedTo: src), .unchecked)
+    }
+
     func testHomeExpansionAndScriptPlacement() throws {
         let home = temp()
         var i = HookInstaller(hookCommand: "$HOME/.local/bin/meum-hook", home: home)

@@ -99,7 +99,7 @@ final class WidgetInstaller {
         return nil
     }
 
-    /// Trusts the widget's library as it is now (Settings "Allow", `meum widget allow`).
+    /// Trusts the widget's library as it is now (Settings ▸ Widgets "Allow"; never over the socket).
     func allow(_ id: String) throws -> JSON {
         guard let widgets, let e = widgets.entry(id) else { throw ControlError.notFound("no installed widget '\(id)'") }
         pins.pins[e.id] = .init(sha256: try WidgetHash.sha256(of: e.library), source: .allowed, helperSha256: Self.helperHash(e))
@@ -153,9 +153,12 @@ final class WidgetInstaller {
                 "author": w.author.map { .string($0) } ?? .null, "scope": .string(w.scope), "version": .string(w.version),
                 "apiVersion": .string(w.apiVersion), "archs": .array(w.archs.map { .string($0) }),
                 "installed": .bool(installed), "installedVersion": iv.map { .string($0) } ?? .null,
-                "runs": .bool(WidgetCatalog.runs(w, api: MeumKit.apiVersion, arch: Self.arch)),
+                "runs": .bool(WidgetCatalog.runs(w, api: MeumKit.apiVersion, arch: Self.arch, meum: ControlInfo.appVersion)),
+                "minMeum": w.minMeum.map { .string($0) } ?? .null,
+                "needsMeum": w.needsMeum(ControlInfo.appVersion).map { .string($0) } ?? .null,
             ]
-            o["update"] = .bool(installed && (iv.map { widgetVersionIsNewer(w.version, than: $0) } ?? true))
+            let libSha = installed ? widgets?.entry(w.id).flatMap { try? WidgetHash.sha256(of: $0.library) } : nil
+            o["update"] = .bool(installed && w.isUpdate(installedVersion: iv, installedLibrarySha256: libSha))
             o["collapsedSidebar"] = w.collapsedSidebar.map { .bool($0) } ?? .null
             o["helper"] = w.helper.map { .bool($0) } ?? .null
             return .object(o)
@@ -181,6 +184,9 @@ final class WidgetInstaller {
         }
         guard w.apiVersion == MeumKit.apiVersion else {
             throw InstallError(description: "\(w.displayName) speaks \(w.apiVersion), this meum speaks \(MeumKit.apiVersion)")
+        }
+        if let need = w.needsMeum(ControlInfo.appVersion) {
+            throw InstallError(description: "\(w.displayName) \(w.version) needs meum \(need) or later; update meum first")
         }
         guard w.archs.contains(Self.arch) else {
             throw InstallError(description: "\(w.displayName) has no build for \(Self.arch) (only \(w.archs.joined(separator: ", ")))")

@@ -251,6 +251,50 @@ public struct HookInstaller {
         return p.hasPrefix("/") ? p : nil
     }
 
+    /// The hook script shipped next to a `meum` executable (the app bundle's Resources/bin), if it is there.
+    public static func bundledScript(nextTo executable: String?) -> String? {
+        guard let executable, !executable.isEmpty else { return nil }
+        let p = URL(fileURLWithPath: executable).resolvingSymlinksInPath().deletingLastPathComponent()
+            .appendingPathComponent("meum-hook").path
+        return FileManager.default.isExecutableFile(atPath: p) ? p : nil
+    }
+
+    /// Copies `source` to the hook command path when the file there is missing or differs (an older meum's copy).
+    /// Returns whether it wrote.
+    @discardableResult
+    public func refreshScript(from source: String) throws -> Bool {
+        guard let dest = scriptDestination else { return false }
+        let fm = FileManager.default
+        if let have = fm.contents(atPath: dest), have == fm.contents(atPath: source), fm.isExecutableFile(atPath: dest) {
+            return false
+        }
+        _ = try installScript(from: source)
+        return true
+    }
+
+    /// The hook script the settings point at, compared with this meum's own copy.
+    public enum ScriptState: String, Sendable {
+        case current          // the same bytes as `source`, executable
+        case differs          // another meum's copy (or edited): `meum hooks install --yes` replaces it
+        case missing          // nothing there: the hooks run nothing, so meum hears nothing
+        case notExecutable = "not-executable"
+        case unchecked        // no own copy to compare with, or a hook command that isn't a file path
+    }
+
+    public func scriptState(comparedTo source: String?) -> ScriptState {
+        guard let dest = scriptDestination else { return .unchecked }
+        let fm = FileManager.default
+        guard let have = fm.contents(atPath: dest) else { return .missing }
+        guard fm.isExecutableFile(atPath: dest) else { return .notExecutable }
+        guard let source, let want = fm.contents(atPath: source) else { return .unchecked }
+        return have == want ? .current : .differs
+    }
+
+    /// Whether any discovered config dir has meum's hooks (fully or partly).
+    public func anyInstalled() -> Bool {
+        targets(for: Self.discoverConfigDirs(home: home)).contains { !status(of: $0).installedEvents.isEmpty }
+    }
+
     /// Copies `source` to the hook command path with mode 0755 (creating the directory).
     public func installScript(from source: String) throws -> String {
         guard let dest = scriptDestination else {

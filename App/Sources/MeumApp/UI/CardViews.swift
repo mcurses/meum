@@ -253,10 +253,18 @@ final class WidgetSlotCardView: CardHostView {
         label.isHidden = false
     }
 
-    /// The placeholder text: "widgets" without a widget, or why loading failed.
+    /// The placeholder text: an invitation without a widget (a click opens Settings ▸ Widgets), or why loading failed.
     func showPlaceholder(_ text: String?) {
         unhost()
-        label.stringValue = text ?? "widgets"
+        label.stringValue = text ?? "No widgets · Get Widgets…"
+        invites = text == nil
+    }
+    private var invites = false
+    /// Opens Settings at Widgets (set by the app delegate).
+    static var onGetWidgets: (() -> Void)?
+
+    override func mouseDown(with event: NSEvent) {
+        if hosted == nil, invites { Self.onGetWidgets?() } else { super.mouseDown(with: event) }
     }
 
     /// The height for the "auto" widget height: what the widget asked for, else its fitting size; nil without.
@@ -265,5 +273,111 @@ final class WidgetSlotCardView: CardHostView {
         if let h = requestedHeight() { return h }
         guard let h = hosted?.fittingSize.height, h > 0 else { return nil }
         return h
+    }
+}
+
+/// The built-in Tips widget (setting `showStartHint`, switched in Settings ▸ Widgets or closed with its ×): the
+/// gestures no menu shows, that terminals survive quitting, and where Settings and Help are. Not in the rail.
+final class StartHintView: NSView {
+    /// One tip per page: what it is, and a friendlier line in grey under it.
+    static let tips: [(String, String)] = [
+        ("Your terminals keep running when meum quits.",
+         "Go ahead, restart meum. Your sessions will be waiting for you."),
+        ("Drag a tab onto a card's edge to split it.",
+         "Or onto another card to move it there. Double-click the gap between two cards to even them out."),
+        ("⌘-click or ⇧-click selects several workspaces.",
+         "Then right-click to put them in a group. A group folds away with a click on its name."),
+        ("The dots tell you what Claude is up to.",
+         "Orange waits for you, blue is done and unread, grey is idle. Hover a dot if you forget."),
+        ("Make it yours with ⌘,",
+         "Fonts, colour themes, glass, the sidebar, widgets and every shortcut."),
+        ("There's more in the Help menu.",
+         "Including how to let Claude Code drive meum itself."),
+    ]
+    private(set) var page = 0
+    private let header = NSTextField(labelWithString: "Tips")
+    private let counter = NSTextField(labelWithString: "")
+    private let tip = NSTextField(wrappingLabelWithString: "")
+    private let note = NSTextField(wrappingLabelWithString: "")
+    private let prev = NSButton(), next = NSButton(), close = NSButton()
+    var onClose: (() -> Void)?
+    override var isFlipped: Bool { true }
+
+    private static let tipFont = NSFont.systemFont(ofSize: 12, weight: .medium)
+    private static let noteFont = NSFont.systemFont(ofSize: 11)
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        header.font = .systemFont(ofSize: 10, weight: .bold)
+        header.textColor = NSColor(white: 1, alpha: 0.45)
+        counter.font = .monospacedDigitSystemFont(ofSize: 10, weight: .medium)
+        counter.textColor = NSColor(white: 1, alpha: 0.35)
+        counter.alignment = .right
+        tip.font = Self.tipFont
+        tip.textColor = NSColor(white: 1, alpha: 0.88)
+        note.font = Self.noteFont
+        note.textColor = NSColor(white: 1, alpha: 0.48)
+        for (b, symbol, label, action) in [(prev, "chevron.left", "Previous tip", #selector(prevClicked)),
+                                           (next, "chevron.right", "Next tip", #selector(nextClicked)),
+                                           (close, "xmark", "Don't show tips", #selector(closeClicked))] {
+            b.bezelStyle = .inline
+            b.isBordered = false
+            b.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)?
+                .withSymbolConfiguration(.init(pointSize: 8.5, weight: .bold))
+            b.contentTintColor = NSColor(white: 1, alpha: 0.5)
+            b.toolTip = label
+            b.target = self
+            b.action = action
+        }
+        close.toolTip = "Don't show tips (Settings ▸ Widgets brings them back)"
+        for v in [header, counter, tip, note, prev, next, close] { addSubview(v) }
+        show(0)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    @objc private func closeClicked() { onClose?() }
+    @objc private func prevClicked() { show(page - 1) }
+    @objc private func nextClicked() { show(page + 1) }
+
+    /// Shows a page (wrapping around at both ends).
+    func show(_ p: Int) {
+        let n = Self.tips.count
+        page = ((p % n) + n) % n
+        tip.stringValue = Self.tips[page].0
+        note.stringValue = Self.tips[page].1
+        counter.stringValue = "\(page + 1) / \(n)"
+        needsLayout = true
+    }
+
+    /// Measured the way the label draws (its cell wraps a little narrower than the plain text would).
+    private static let measure = NSTextField(wrappingLabelWithString: "")
+    private static func textHeight(_ s: String, _ font: NSFont, width: CGFloat) -> CGFloat {
+        measure.font = font
+        measure.stringValue = s
+        return ceil(measure.cell!.cellSize(forBounds: NSRect(x: 0, y: 0, width: width, height: 10_000)).height)
+    }
+
+    /// The height the card needs at a width: the tallest page, so paging doesn't make the card jump.
+    func height(forWidth w: CGFloat) -> CGFloat {
+        let tw = w - 24
+        let body = Self.tips.map { Self.textHeight($0.0, Self.tipFont, width: tw) + 4 + Self.textHeight($0.1, Self.noteFont, width: tw) }
+            .max() ?? 0
+        return 30 + body + 14
+    }
+
+    override func layout() {
+        super.layout()
+        let w = bounds.width, tw = w - 24
+        header.frame = NSRect(x: 12, y: 10, width: 60, height: 14)
+        close.frame = NSRect(x: w - 26, y: 7, width: 18, height: 18)
+        next.frame = NSRect(x: w - 48, y: 7, width: 18, height: 18)
+        prev.frame = NSRect(x: w - 68, y: 7, width: 18, height: 18)
+        counter.frame = NSRect(x: w - 118, y: 10, width: 48, height: 14)
+        let th = Self.textHeight(tip.stringValue, Self.tipFont, width: tw)
+        tip.preferredMaxLayoutWidth = tw
+        tip.frame = NSRect(x: 12, y: 30, width: tw, height: th)
+        note.preferredMaxLayoutWidth = tw
+        note.frame = NSRect(x: 12, y: 30 + th + 4, width: tw, height: Self.textHeight(note.stringValue, Self.noteFont, width: tw))
     }
 }

@@ -84,6 +84,26 @@ final class ProtocolTests: XCTestCase {
         XCTAssertEqual(ControlPaths.socketPath(env: ["MEUM_SOCKET": ""], home: "/h"), "/h/.local/state/meum/meum.sock")
         XCTAssertEqual(ControlPaths.socketPath(env: [:], home: "/h"), "/h/.local/state/meum/meum.sock")
     }
+
+    func testBundleVersionFromInsideTheApp() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("meum-bv-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let contents = dir.appendingPathComponent("meum.app/Contents")
+        try FileManager.default.createDirectory(at: contents.appendingPathComponent("Resources/bin"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: contents.appendingPathComponent("MacOS"), withIntermediateDirectories: true)
+        (["CFBundleShortVersionString": "0.5.0", "CFBundleIdentifier": "io.github.mcurses.meum"] as NSDictionary).write(to: contents.appendingPathComponent("Info.plist"), atomically: true)
+        XCTAssertEqual(ControlInfo.bundleVersion(around: contents.appendingPathComponent("MacOS/meum").path), "0.5.0")
+        XCTAssertEqual(ControlInfo.bundleVersion(around: contents.appendingPathComponent("Resources/bin/meum").path), "0.5.0")
+        XCTAssertNil(ControlInfo.bundleVersion(around: dir.appendingPathComponent("loose/meum").path))
+        XCTAssertNil(ControlInfo.bundleVersion(around: nil))
+        (["CFBundleShortVersionString": "27.2", "CFBundleIdentifier": "com.apple.dt.Xcode"] as NSDictionary)
+            .write(to: contents.appendingPathComponent("Info.plist"), atomically: true)
+        XCTAssertNil(ControlInfo.bundleVersion(around: contents.appendingPathComponent("MacOS/meum").path), "another app's version")
+    }
+
+    func testMethodsAreListedOnce() {
+        XCTAssertEqual(ControlInfo.methods.count, Set(ControlInfo.methods).count)
+    }
 }
 
 final class EventBusTests: XCTestCase {
@@ -171,4 +191,5 @@ final class Locked<T>: @unchecked Sendable {
     var value: T { lock.lock(); defer { lock.unlock() }; return v }
     func set(_ n: T) { lock.lock(); v = n; lock.unlock() }
     func mutate(_ f: (inout T) -> Void) { lock.lock(); f(&v); lock.unlock() }
+
 }

@@ -139,13 +139,27 @@ final class AppAPI {
             store.mutate(.cosmetic) { $0.setColor(ws.id, hex) }
             return .null
 
+        case MeumMethod.workspaceSetLabels:
+            let ws = try workspace(p)
+            // without 'labels': a read, changing nothing
+            guard p["labels"] != nil else {
+                return ["id": .string(ws.id.uuidString), "labels": .array((ws.labels ?? []).map { .string($0) })]
+            }
+            guard let arr = p["labels"]?.arrayValue else { throw ControlError.invalidParams("needs 'labels' (a list of strings)") }
+            let labels: [String]
+            do { labels = try AgentSnapshot.validLabels(arr.map { $0.stringValue ?? "" }) } catch {
+                throw ControlError.invalidParams("\(error)")
+            }
+            store.mutate(.cosmetic) { $0.updateWorkspace(ws.id) { $0.labels = labels.isEmpty ? nil : labels } }
+            return ["id": .string(ws.id.uuidString), "labels": .array(labels.map { .string($0) })]
+
         case MeumMethod.workspaceSetIcon:
             let ws = try workspace(p)
             let raw = p["icon"]
             var icon: String?
             if let raw, !raw.isNull, let s = raw.stringValue, !s.isEmpty, s != "none" {
                 guard let parsed = WorkspaceIcon(s) else {
-                    throw ControlError.invalidParams("icon: an emoji or up to two characters, or sf:<symbol name>")
+                    throw ControlError.invalidParams("icon: sf:<SF Symbol name> (preferred), or up to two characters")
                 }
                 if case .symbol(let name) = parsed, NSImage(systemSymbolName: name, accessibilityDescription: nil) == nil {
                     throw ControlError.invalidParams("no SF Symbol named '\(name)'")
@@ -260,7 +274,29 @@ final class AppAPI {
                 throw ControlError.notFound("no focused tab")
             }
             return ["workspace": .string(ws.id.uuidString), "tab": .string(tab.id.uuidString),
-                    "widget": tab.widget.map { .string($0) } ?? .null]
+                    "widget": tab.widget.map { .string($0) } ?? .null,
+                    // the Claude Code session's own name (display only; address the tab by its id)
+                    "name": tab.agent?.name.map { .string($0) } ?? .null,
+                    // labels the session attached to itself (tab.setLabels)
+                    "labels": .array((tab.agent?.labels ?? []).map { .string($0) })]
+
+        case MeumMethod.tabSetLabels:
+            let (_, tab) = try self.tab(p)
+            // without 'labels': a read, changing nothing
+            guard p["labels"] != nil else {
+                return ["tab": .string(tab.id.uuidString), "labels": .array((tab.agent?.labels ?? []).map { .string($0) })]
+            }
+            guard let arr = p["labels"]?.arrayValue else { throw ControlError.invalidParams("needs 'labels' (a list of strings)") }
+            let labels: [String]
+            do { labels = try AgentSnapshot.validLabels(arr.map { $0.stringValue ?? "" }) } catch {
+                throw ControlError.invalidParams("\(error)")
+            }
+            guard tab.agent != nil else {
+                throw ControlError.unavailable("tab \(tab.id.uuidString) has no Claude Code session (labels belong to one; are meum's hooks installed?)")
+            }
+            store.mutate(.cosmetic) { $0.updateTab(tab.id) { $0.agent?.labels = labels.isEmpty ? nil : labels } }
+            control.bus.publish("tab.labels", ["tab": .string(tab.id.uuidString), "labels": .array(labels.map { .string($0) })])
+            return ["tab": .string(tab.id.uuidString), "labels": .array(labels.map { .string($0) })]
 
         case MeumMethod.tabPaste:
             let (_, tab) = try self.tab(p)
@@ -271,8 +307,9 @@ final class AppAPI {
             }
             // ghostty's paste path: bracketed exactly when the program asked for it; the surface may be hidden
             // (a parked workspace) and keeps its focus state either way
-            surface.insertPasted(text: text)
-            return ["tab": .string(tab.id.uuidString)]
+            let submit = p["submit"]?.boolValue ?? false
+            surface.insertPasted(text: text, submit: submit)
+            return ["tab": .string(tab.id.uuidString), "submitted": .bool(submit)]
 
         case MeumMethod.splitResize:
             guard let ref = p["split"]?.stringValue ?? p["id"]?.stringValue, let id = UUID(uuidString: ref),
@@ -298,8 +335,10 @@ final class AppAPI {
             return try control.installer.remove(id, data: p["data"]?.boolValue ?? false)
 
         case MeumMethod.widgetAllow:
-            guard let id = nonEmpty(p["id"]?.stringValue) else { throw ControlError.invalidParams("needs 'id'") }
-            return try control.installer.allow(id)
+            // trust is not the socket's to give: open Settings where the user can, and say why
+            control.onOpenSettings?("widgets")
+            throw ControlError(code: "forbidden", message: SettingsJSON.trustRefusal("a widget's trust")
+                + "; Settings is open at Widgets")
 
         case MeumMethod.widgetEnable:
             guard let w = control.widgets else { throw ControlError.unavailable("no widget host") }
@@ -321,6 +360,9 @@ final class AppAPI {
             guard let settings = control.settings else { throw ControlError.unavailable("no settings") }
             guard let key = nonEmpty(p["key"]?.stringValue) else { throw ControlError.invalidParams("needs 'key'") }
             guard let value = p["value"] else { throw ControlError.invalidParams("needs 'value'") }
+            if SettingsJSON.socketReadOnly.contains(key) {
+                throw ControlError(code: "forbidden", message: SettingsJSON.trustRefusal("'\(key)'"))
+            }
             return ["key": .string(key), "value": try settings.set(key, value)]
 
         case MeumMethod.statusSet:

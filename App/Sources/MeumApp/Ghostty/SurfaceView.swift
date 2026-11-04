@@ -280,11 +280,13 @@ final class SurfaceView: NSView {
         return String(decoding: UnsafeRawBufferPointer(start: ptr, count: Int(t.text_len)), as: UTF8.self)
     }
 
-    /// Inserts text as a paste (bracketed when the program asked for it).
-    func insertPasted(text: String) {
-        guard let surface, !text.isEmpty else { return }
+    /// Inserts text as a paste (bracketed when the program asked for it); `submit` then presses Return on the
+    /// same surface, so the Return reaches the program after the pasted text, never before it.
+    func insertPasted(text: String, submit: Bool = false) {
+        guard let surface else { return }
         commitOrDiscardComposition()
-        text.withCString { ghostty_surface_text(surface, $0, UInt(text.utf8.count)) }
+        if !text.isEmpty { text.withCString { ghostty_surface_text(surface, $0, UInt(text.utf8.count)) } }
+        if submit { sendReturn(to: surface) }
     }
 
     /// Types text as key input; `\n` becomes a Return key press.

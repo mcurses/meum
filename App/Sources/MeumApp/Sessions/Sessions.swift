@@ -92,6 +92,20 @@ final class ZmxSessions {
     /// - It is gone and the tab carries an agent snapshot: create it running the resume command, then a shell.
     /// - Otherwise: create it with the tab's command if it has one, else the login shell.
     func command(for tab: Tab, live: Set<String>) -> (command: String, resumed: Bool) {
+        let (cmd, resumed) = attachCommand(for: tab, live: live)
+        return (Self.afterFirstResize(cmd), resumed)
+    }
+
+    /// libghostty starts a surface's pty at a default 800×600 px and applies the view's real size only after its
+    /// 25 ms resize coalescing. A `zmx attach` that starts inside that window sends the default size to the
+    /// session first, and a TUI there (Claude Code) can keep drawing at it after the real size follows. Starting
+    /// the client a moment later gives the session one size: the real one. (Through `env`: libghostty runs the
+    /// command with `exec -l`, which would make a bare `sh` a login shell that reads the profile files.)
+    static func afterFirstResize(_ command: String) -> String {
+        "/usr/bin/env sh -c \(quote("sleep 0.15; exec " + command))"
+    }
+
+    private func attachCommand(for tab: Tab, live: Set<String>) -> (command: String, resumed: Bool) {
         let n = name(for: tab.id)
         let attach = "\(Self.quote(binary)) attach \(Self.quote(n))"
         if live.contains(n) { return (attach, false) }

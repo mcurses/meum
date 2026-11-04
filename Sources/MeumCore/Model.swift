@@ -8,13 +8,38 @@ public struct AgentSnapshot: Codable, Equatable, Sendable {
     public var configDir: String?
     public var transcriptPath: String?
     public var cwd: String?
+    /// The session's name from Claude Code's own record of it (`<configDir>/sessions/<pid>.json`), e.g. `meum-05`.
+    public var name: String?
+    /// Short labels the agent attached to its session (`tab.setLabels`): shown as chips on its tab and workspace
+    /// row, gone when the session ends. nil or empty: none.
+    public var labels: [String]?
 
-    public init(sessionID: String, configDir: String? = nil, transcriptPath: String? = nil, cwd: String? = nil) {
+    public init(sessionID: String, configDir: String? = nil, transcriptPath: String? = nil, cwd: String? = nil,
+                name: String? = nil, labels: [String]? = nil) {
         self.sessionID = sessionID
         self.configDir = configDir
         self.transcriptPath = transcriptPath
         self.cwd = cwd
+        self.name = name
+        self.labels = labels
     }
+
+    /// At most this many labels, each at most `maxLabelLength` characters.
+    public static let maxLabels = 4
+    public static let maxLabelLength = 24
+
+    /// Trimmed, non-empty, distinct labels; throws a message for too many or too long ones.
+    public static func validLabels(_ raw: [String]) throws -> [String] {
+        var out: [String] = []
+        for l in raw.map({ $0.trimmingCharacters(in: .whitespacesAndNewlines) }) where !l.isEmpty && !out.contains(l) {
+            guard l.count <= maxLabelLength else { throw LabelError("a label is at most \(maxLabelLength) characters: '\(l)'") }
+            out.append(l)
+        }
+        guard out.count <= maxLabels else { throw LabelError("at most \(maxLabels) labels") }
+        return out
+    }
+
+    public struct LabelError: Error, CustomStringConvertible { public let description: String; init(_ d: String) { description = d } }
 }
 
 public struct Tab: Codable, Equatable, Sendable, Identifiable {
@@ -153,6 +178,9 @@ public struct Workspace: Codable, Equatable, Sendable, Identifiable {
     public var focusedCardID: UUID?
     /// The sidebar group it belongs to (`AppState.groups`); nil: none.
     public var group: UUID?
+    /// Short labels for the workspace's sidebar row (`workspace.setLabels`), saved with it. Separate from the labels
+    /// sessions put on their own tabs. nil or empty: none.
+    public var labels: [String]?
 
     public init(id: UUID = UUID(), name: String, color: String? = nil, icon: String? = nil, pinned: Bool = false,
                 cwd: String? = nil, root: LayoutNode? = nil, focusedCardID: UUID? = nil) {

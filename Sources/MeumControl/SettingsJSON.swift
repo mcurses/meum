@@ -8,14 +8,16 @@
 //   background "glass"(="tint")|"vibrancy"|"liquid"|"solid", wallpaper bool (the pinned wallpaper under the material),
 //   liquidStyle "regular"|"clear", focusFrameSaturation 0…1 (focused card frame: 1 workspace colour, 0 grey),
 //   focusFrameOpacity 0…1, glassBlur 0…40, glassTint 0…1, solidColor "#rrggbb",
-//   fontFamily string|null, fontSize 6…48, ghosttyConfigPath string|null, gapsCatchClicks bool,
+//   fontFamily string|null, fontSize 6…48, terminalTheme string|null (a bundled Ghostty theme's name), ghosttyConfigPath string|null, gapsCatchClicks bool,
 //   reattachSessions bool, resumeClaude bool, sidebarCollapsed bool, checkUpdates bool (daily release check),
+//   showStartHint bool (the one-line hint at the bottom of the window, until closed),
 //   sidebarShowBranch, sidebarShowDirectory, sidebarShowStatus, sidebarShowMetadata, sidebarShowPorts, sidebarShowAgentDots,
 //   sidebarShowShortcuts, sidebarShowPin bool   what a sidebar row shows besides the name
 //   widgetOrder [widget id…]   top to bottom within each group (workspace widgets above global ones)
 //   widgetCatalogURL "https://…"   the widget library's catalog.json (null restores the default)
 //   widgetTeamIDs [Team ID…]   Developer ID teams whose signed widgets load without a pinned hash
 //   widgetDeveloperMode bool   load unverified widgets too
+//   (the three widget* trust keys are read-only here: settings.set refuses them, Settings ▸ Widgets changes them)
 //   shortcuts {actionID: "cmd+shift+r" | null}   every action's combination in effect (null = none); setting it
 //                                               takes an object of the actions to change
 //   shortcut.<actionID> "cmd+shift+r" | "none" | null   one action; "none" removes its shortcut, null restores
@@ -24,10 +26,20 @@ import Foundation
 import MeumCore
 
 public enum SettingsJSON {
+    /// Widget trust: what decides which native code loads into meum. Readable over the socket, changed only in
+    /// Settings ▸ Widgets, so no program in a tab (a session, a script, a postinstall) can lower it for itself.
+    public static let socketReadOnly: Set<String> = ["widgetDeveloperMode", "widgetTeamIDs", "widgetCatalogURL"]
+
+    /// The refusal a socket client gets for a trust change (`what`: the setting or the command it tried).
+    public static func trustRefusal(_ what: String) -> String {
+        "\(what) can't be changed from a program: widget trust is set only in meum's Settings ▸ Widgets, where nothing "
+            + "running in a tab can do it for you (`meum widget allow` is gone too; use the Allow button there)"
+    }
+
     public static let keys: [String] = [
         "cardGap", "cornerRadius", "sidebarWidth", "sidebarCollapsed", "widgetHeight", "widgetOrder", "widgetCatalogURL", "widgetTeamIDs", "widgetDeveloperMode", "background", "wallpaper", "liquidStyle", "focusFrameSaturation", "focusFrameOpacity", "glassBlur", "glassTint",
-        "solidColor", "fontFamily", "fontSize", "ghosttyConfigPath", "gapsCatchClicks", "reattachSessions",
-        "resumeClaude", "shortcuts", "checkUpdates",
+        "solidColor", "fontFamily", "fontSize", "terminalTheme", "ghosttyConfigPath", "gapsCatchClicks", "reattachSessions",
+        "resumeClaude", "shortcuts", "checkUpdates", "showStartHint",
     ] + sidebarShowKeys
 
     /// The sidebar row's show/hide switches.
@@ -62,11 +74,13 @@ public enum SettingsJSON {
         case "solidColor": return .string(s.solidColor)
         case "fontFamily": return str(s.fontFamily)
         case "fontSize": return num(s.fontSize)
+        case "terminalTheme": return str(s.terminalTheme)
         case "ghosttyConfigPath": return str(s.ghosttyConfigPath)
         case "gapsCatchClicks": return .bool(s.gapsCatchClicks)
         case "reattachSessions": return .bool(s.reattachSessions)
         case "resumeClaude": return .bool(s.resumeClaude)
         case "checkUpdates": return .bool(s.checkUpdates)
+        case "showStartHint": return .bool(s.showStartHint)
         case "sidebarShowBranch": return .bool(s.sidebarShowBranch)
         case "sidebarShowDirectory": return .bool(s.sidebarShowDirectory)
         case "sidebarShowStatus": return .bool(s.sidebarShowStatus)
@@ -168,6 +182,7 @@ public enum SettingsJSON {
             }
             s.solidColor = h
         case "fontFamily": s.fontFamily = try optionalString()
+        case "terminalTheme": s.terminalTheme = try optionalString()
         case "fontSize": s.fontSize = try number()
         case "ghosttyConfigPath": s.ghosttyConfigPath = try optionalString().map { ($0 as NSString).expandingTildeInPath }
         case "gapsCatchClicks": s.gapsCatchClicks = try bool()
@@ -175,6 +190,7 @@ public enum SettingsJSON {
         case "reattachSessions": s.reattachSessions = try bool()
         case "resumeClaude": s.resumeClaude = try bool()
         case "checkUpdates": s.checkUpdates = try bool()
+        case "showStartHint": s.showStartHint = try bool()
         case "sidebarShowBranch": s.sidebarShowBranch = try bool()
         case "sidebarShowDirectory": s.sidebarShowDirectory = try bool()
         case "sidebarShowStatus": s.sidebarShowStatus = try bool()

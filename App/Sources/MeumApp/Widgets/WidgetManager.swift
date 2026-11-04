@@ -304,7 +304,7 @@ final class WidgetManager {
             trustByID[entry.id] = trust
             if case .unverified(let why) = trust {
                 try? FileManager.default.removeItem(at: copy)
-                throw LoadError(description: "not verified (\(why)); allow it in Settings ▸ Widgets or with `meum widget allow \(entry.id)`")
+                throw LoadError(description: "not verified (\(why)); allow it in Settings ▸ Widgets")
             }
         }
         if FileManager.default.fileExists(atPath: entry.folder.appendingPathComponent("libMeumKit.dylib").path) {

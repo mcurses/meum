@@ -36,6 +36,13 @@ public enum ListeningPorts {
         return seen
     }
 
+    /// The process's name (its executable's), or nil when it is gone.
+    public static func name(of pid: pid_t) -> String? {
+        var buf = [CChar](repeating: 0, count: 256)
+        let n = proc_name(pid, &buf, UInt32(buf.count))
+        return n > 0 ? String(cString: buf) : nil
+    }
+
     /// TCP ports the process listens on (IPv4 and IPv6), sorted, distinct.
     public static func ports(of pid: pid_t) -> [Int] {
         let bytes = proc_pidinfo(pid, PROC_PIDLISTFDS, 0, nil, 0)

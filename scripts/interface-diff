@@ -1,0 +1,84 @@
+#!/usr/bin/env python3 -I
+"""Compares meum's two public interfaces with the last public release (a git ref, default github/main) and refuses
+what would break their users. scripts/release.sh --publish runs it.
+
+  MeumKit (Sources/MeumKit/*.swift), what widget libraries link against: "additions only, each with a default".
+    - a public declaration line of the release that is gone or changed: refused (widgets built against the release
+      would fail to load); --allow-break lets a deliberate break through
+    - new public declaration lines: listed; widgets/MINIMUM_MEUM must then name the version being
+      released, so the catalog's minMeum keeps widgets that use them away from older meums
+  The control API (docs/api.md, generated): a method or event of the release that is gone is refused.
+
+Usage: scripts/interface-diff <version being released> [<ref>] [--allow-break]
+"""
+import os, re, subprocess, sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def git(*a):
+    r = subprocess.run(["git", "-C", ROOT, *a], capture_output=True, text=True)
+    return r.stdout if r.returncode == 0 else None
+
+
+def public_lines(text):
+    """Public declarations, whitespace-normalised, comments dropped."""
+    out = set()
+    for line in text.splitlines():
+        line = line.split("//")[0].strip()
+        if re.match(r"(@\w+\s+)*(public|open)\s", line):
+            out.add(re.sub(r"\s+", " ", line))
+    return out
+
+
+def api_names(text):
+    return set(re.findall(r"^- `([\w.]+)`:", text, re.M))
+
+
+def main():
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    allow_break = "--allow-break" in sys.argv
+    if not args:
+        sys.exit(__doc__)
+    version, ref = args[0], (args[1] if len(args) > 1 else "github/main")
+    problems = []
+
+    files = sorted(f for f in os.listdir(os.path.join(ROOT, "Sources/MeumKit")) if f.endswith(".swift"))
+    now = set().union(*(public_lines(open(os.path.join(ROOT, "Sources/MeumKit", f)).read()) for f in files))
+    before = set()
+    for f in (git("ls-tree", "--name-only", f"{ref}:Sources/MeumKit") or "").split():
+        if f.endswith(".swift"):
+            before |= public_lines(git("show", f"{ref}:Sources/MeumKit/{f}") or "")
+    if not before:
+        print(f"interface-diff: no MeumKit in {ref}; nothing to compare")
+    else:
+        gone, added = sorted(before - now), sorted(now - before)
+        if gone and not allow_break:
+            problems.append("MeumKit declarations of the last release are gone or changed (widgets built against it "
+                            "would not load):\n    " + "\n    ".join(gone))
+        if added:
+            print("interface-diff: MeumKit grew:\n    " + "\n    ".join(added))
+            minimum = open(os.path.join(ROOT, "widgets/MINIMUM_MEUM")).read().strip()
+            if minimum != version:
+                problems.append(f"MeumKit grew, so widgets/MINIMUM_MEUM must say {version} (it says {minimum}): "
+                                "widgets using the additions need this meum")
+        if not gone and not added:
+            print("interface-diff: MeumKit unchanged")
+
+    old_api = git("show", f"{ref}:docs/api.md")
+    if old_api:
+        gone = sorted(api_names(old_api) - api_names(open(os.path.join(ROOT, "docs/api.md")).read()))
+        if gone:
+            problems.append("control API methods or events of the last release are gone: " + ", ".join(gone))
+        else:
+            print("interface-diff: control API keeps every method and event")
+    else:
+        print(f"interface-diff: no docs/api.md in {ref} yet; control API not compared")
+
+    for p in problems:
+        print("interface-diff: " + p, file=sys.stderr)
+    sys.exit(1 if problems else 0)
+
+
+if __name__ == "__main__":
+    main()

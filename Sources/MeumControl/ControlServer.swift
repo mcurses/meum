@@ -205,7 +205,8 @@ public final class ControlServer: @unchecked Sendable {
                 switch req.method {
                 case MeumMethod.ping:
                     let r: JSON = ["api": .string(ControlInfo.apiVersion), "pid": .int(Int(getpid())),
-                                   "seq": .int(bus.lastSeq)]
+                                   "seq": .int(bus.lastSeq), "version": ControlInfo.appVersion.map { .string($0) } ?? .null,
+                                   "methods": .array(ControlInfo.methods.map { .string($0) })]
                     _ = fdRef.sendLine(Response(id: req.id, result: r).encoded())
                 case MeumMethod.eventsSubscribe:
                     if conn.subscription != nil {

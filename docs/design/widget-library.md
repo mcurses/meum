@@ -26,7 +26,9 @@ What's missing: a catalog, an install path, trust, widgets with a background pro
 - Per widget:
   - id, display name, one-line description, author, icon URL;
   - scope, and whether it has a collapsed sidebar look (see "Collapsed sidebar" below);
-  - newest version, minimum meum version, minimum MeumKit API (`meum.v1`);
+  - newest version, minimum meum version (`minMeum`: release-widget.sh writes `widgets/MINIMUM_MEUM`, the
+    release whose MeumKit last grew; meum 0.5 and later don't offer a widget to an older meum, older ones ignore the
+    field), minimum MeumKit API (`meum.v1`);
   - archs, download URL (zip) and sha256;
   - the signing Team ID it must carry.
 - Each widget is released as a zip of its `.meumwidget/` folder, for example as a GitHub release asset of the widget's
@@ -79,6 +81,14 @@ A widget is native code that runs inside meum with the user's full rights. Insta
   - The hardened runtime's library validation only loads libraries signed by meum's own team, so meum needs the
     entitlement `com.apple.security.cs.disable-library-validation`. The checks above replace it.
 - Downloads made by meum carry no quarantine flag. The checks above are what protects the user, not Gatekeeper.
+- **Who can change trust.** Developer mode, the trusted teams and the library address are set only in
+  Settings ▸ Widgets, and so is Allow for a single widget. Over the control socket (and so the CLI and the MCP
+  server) these settings are read-only and `widget.allow` answers `forbidden`, because every program in every tab
+  reaches the socket: a Claude Code session that read a hostile page, a script it runs, a package's install script.
+- **What that does not stop:** a program that writes meum's files directly (`settings.json`, the pins file, the
+  widgets folder). It already runs as the user, with the user's rights; no check inside meum can tell it from the
+  user. The trust checks guard against a tampered catalog or download and against requests over the socket, not
+  against code already running as you.
 
 ## 4. Widgets with a background program (Tamago)
 

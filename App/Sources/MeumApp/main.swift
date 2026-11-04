@@ -12,8 +12,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var control: AppControl!
     var settings: AppSettings!
     var settingsWindow: SettingsWindowController!
+    var help: HelpWindowController!
     var widgets: WidgetManager!
     var updater: Updater!
+    var updates: UpdateCenter!
 
     init(options: AppOptions) {
         self.options = options
@@ -58,6 +60,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu = MainMenu(controller: controller)
         menu.onSettings = { [weak self] in self?.settingsWindow.show() }
         menu.onCheckForUpdates = { [weak self] in self?.updater.checkInteractively() }
+        help = HelpWindowController(socket: paths.socket.path)
+        menu.onHelp = { [weak self] in self?.help.show($0) }
+        menu.onSettingsSection = { [weak self] in self?.settingsWindow.show(section: $0) }
+        WidgetSlotCardView.onGetWidgets = { [weak self] in self?.settingsWindow.show(section: "widgets") }
+        control.onOpenSettings = { [weak self] in self?.settingsWindow.show(section: $0) }
+        updates = UpdateCenter { [weak self] in self?.control.installer }
+        updates.onChange = { [weak self] n in self?.menu.setUpdateCount(n) }
+        updater.onAvailable = { [weak self] v in self?.updates.setAppUpdate(v) }
+        settingsWindow.updates = updates
         menu.install(settings: settings.value)
         controller.start()
         widgets = WidgetManager(controller: controller, control: control, directory: options.widgetsDir)
@@ -68,11 +79,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         widgets.reload()
         NSApp.activate(ignoringOtherApps: true)
         if options.debugDir == nil { updater.startAutomaticChecks() }
+        if !options.isolated { Self.refreshHookScript() }
+        updates.start()
 
         if let dir = options.debugDir {
             debug = DebugControl(dir: dir, controller: controller, control: control)
             controller.openURL = { [weak debug] in debug?.openedURLs.append($0.absoluteString) }
             debug?.settingsWindow = settingsWindow
+            debug?.help = help
             debug?.start()
         }
         if let t = options.autoquit {
@@ -80,8 +94,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// When meum's Claude hooks are installed, keeps the script they call (~/.local/bin/meum-hook) the same as this
+    /// version's copy, so a fresh or updated meum never leaves the hooks calling a missing or old file.
+    static func refreshHookScript() {
+        guard let src = Bundle.main.resourceURL?.appendingPathComponent("bin/meum-hook").path else { return }
+        DispatchQueue.global(qos: .utility).async {
+            let installer = HookInstaller()
+            guard installer.anyInstalled() else { return }
+            do {
+                if try installer.refreshScript(from: src) { Log.info("hooks: refreshed \(installer.scriptDestination ?? "")") }
+            } catch {
+                Log.error("hooks: could not refresh the hook script: \(error)")
+            }
+        }
+    }
+
     static func terminal(_ s: Settings) -> GhosttyApp.TerminalSettings {
-        GhosttyApp.TerminalSettings(fontFamily: s.fontFamily, fontSize: s.fontSize, extraConfigPath: s.ghosttyConfigPath)
+        GhosttyApp.TerminalSettings(fontFamily: s.fontFamily, fontSize: s.fontSize, extraConfigPath: s.ghosttyConfigPath,
+                                    theme: s.terminalTheme)
     }
 
     private func resumeProvider(_ s: Settings) -> ResumeProvider {
