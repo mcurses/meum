@@ -746,6 +746,8 @@ final class SidebarView: FlippedView, NSTextFieldDelegate {
         let pt = convert(event.locationInWindow, from: nil)
         if editor != nil { endEditing(commit: true) }
         if plusRect.contains(pt) { host?.sidebarNew(); return }
+        // the header ("WORKSPACES" and the space around it) is meum's title bar: it moves the whole window
+        if pt.y < Self.headerHeight, rowIndex(at: pt) == nil { window?.titleBarMouseDown(event); return }
         guard let r = rowIndex(at: pt) else { return }
         if event.clickCount == 2, !collapsed {
             switch rows[r] {
@@ -1075,6 +1077,9 @@ final class SidebarCardView: CardHostView {
         scroll.autohidesScrollers = true
         scroll.scrollerStyle = .overlay
         scroll.horizontalScrollElasticity = .none
+        // the window has a (hidden) title bar: without this, AppKit insets the list by its height
+        scroll.automaticallyAdjustsContentInsets = false
+        scroll.contentInsets = NSEdgeInsetsZero
         sidebar.frame = content.bounds
         scroll.documentView = sidebar
         content.addSubview(scroll)

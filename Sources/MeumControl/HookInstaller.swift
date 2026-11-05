@@ -259,6 +259,18 @@ public struct HookInstaller {
         return FileManager.default.isExecutableFile(atPath: p) ? p : nil
     }
 
+    /// Whether a launching meum may refresh the live hook script: only an installed copy (`meum.app` directly in
+    /// /Applications or ~/Applications) that runs on the real state, never a dev build, an old DMG opened from
+    /// Downloads, a test instance (own state dir) or a debug instance. Otherwise whichever meum started last would
+    /// decide what every Claude session's hooks run.
+    public static func mayRefreshScript(bundlePath: String, home: String, isolated: Bool, debug: Bool) -> Bool {
+        guard !isolated, !debug else { return false }
+        let url = URL(fileURLWithPath: bundlePath).standardizedFileURL.resolvingSymlinksInPath()
+        guard url.lastPathComponent == "meum.app" else { return false }
+        let parent = url.deletingLastPathComponent().path
+        return parent == "/Applications" || parent == (home as NSString).appendingPathComponent("Applications")
+    }
+
     /// Copies `source` to the hook command path when the file there is missing or differs (an older meum's copy).
     /// Returns whether it wrote.
     @discardableResult

@@ -5,6 +5,7 @@
 import AppKit
 import Foundation
 import GhosttyKit
+import MeumCore
 
 /// The libghostty application: init, config, tick. One per process.
 @MainActor
@@ -76,12 +77,15 @@ final class GhosttyApp {
             }
         }
         var font = "font-size = \(t.fontSize)\n"
-        if let f = t.fontFamily, !f.isEmpty {
+        if let f = t.fontFamily.map(Settings.configSafe), !f.isEmpty {
             // an empty font-family first resets the list the earlier files may have built up
-            font += "font-family = \"\"\nfont-family = \"\(f.replacingOccurrences(of: "\"", with: ""))\"\n"
+            font += "font-family = \"\"\nfont-family = \"\(f)\"\n"
         }
-        if let theme = t.theme, !theme.isEmpty {
-            font += "theme = \"\(theme.replacingOccurrences(of: "\"", with: ""))\"\n"
+        // only a bundled theme by name: a path would make Ghostty load that file as config
+        if let theme = t.theme, Settings.isThemeName(theme), themeNames.contains(theme) {
+            font += "theme = \"\(theme)\"\n"
+        } else if let theme = t.theme, !theme.isEmpty {
+            Log.error("terminal theme '\(Settings.configSafe(theme))' is not a bundled theme; ignored")
         }
         let fontFile = configDir.appendingPathComponent("ghostty.settings.conf")
         try? font.write(to: fontFile, atomically: true, encoding: .utf8)

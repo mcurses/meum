@@ -28,6 +28,9 @@ import MeumCore
 public enum SettingsJSON {
     /// Widget trust: what decides which native code loads into meum. Readable over the socket, changed only in
     /// Settings ▸ Widgets, so no program in a tab (a session, a script, a postinstall) can lower it for itself.
+    /// The bundled theme names, for checking `terminalTheme` (the app sets it; nil accepts any plain name).
+    nonisolated(unsafe) public static var themeNames: (() -> [String])?
+
     public static let socketReadOnly: Set<String> = ["widgetDeveloperMode", "widgetTeamIDs", "widgetCatalogURL"]
 
     /// The refusal a socket client gets for a trust change (`what`: the setting or the command it tried).
@@ -181,8 +184,15 @@ public enum SettingsJSON {
                 throw ControlError.invalidParams("'solidColor' must be #rrggbb")
             }
             s.solidColor = h
-        case "fontFamily": s.fontFamily = try optionalString()
-        case "terminalTheme": s.terminalTheme = try optionalString()
+        case "fontFamily": s.fontFamily = try optionalString().map(Settings.configSafe)
+        case "terminalTheme":
+            let name = try optionalString()
+            if let name, !name.isEmpty {
+                guard Settings.isThemeName(name), themeNames?().contains(name) ?? true else {
+                    throw ControlError.invalidParams("'terminalTheme' must be the name of a bundled theme (Settings ▸ Terminal lists them)")
+                }
+            }
+            s.terminalTheme = name
         case "fontSize": s.fontSize = try number()
         case "ghosttyConfigPath": s.ghosttyConfigPath = try optionalString().map { ($0 as NSString).expandingTildeInPath }
         case "gapsCatchClicks": s.gapsCatchClicks = try bool()

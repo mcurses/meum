@@ -227,4 +227,21 @@ final class MoveResizeSettingsCLITests: XCTestCase {
         XCTAssertThrowsError(try SettingsJSON.set(&s, key: "focusFrameSaturation", value: 1.5))
         XCTAssertEqual(try JSONDecoder().decode(Settings.self, from: Data("{}".utf8)).focusFrameSaturation, 1)
     }
+
+    /// A font or theme setting can't add lines to the Ghostty config, and a theme can't be a path to a file.
+    func testTerminalSettingsCannotInjectConfig() throws {
+        var s = Settings()
+        try SettingsJSON.set(&s, key: "fontFamily", value: "Mono\ncommand = /bin/evil\"x")
+        XCTAssertEqual(s.fontFamily, "Monocommand = /bin/evilx")
+        XCTAssertThrowsError(try SettingsJSON.set(&s, key: "terminalTheme", value: "/tmp/evil.conf"))
+        XCTAssertThrowsError(try SettingsJSON.set(&s, key: "terminalTheme", value: "Dark\ncommand = x"))
+        XCTAssertThrowsError(try SettingsJSON.set(&s, key: "terminalTheme", value: "../x"))
+        SettingsJSON.themeNames = { ["Dracula", "Builtin Dark"] }
+        defer { SettingsJSON.themeNames = nil }
+        try SettingsJSON.set(&s, key: "terminalTheme", value: "Builtin Dark")
+        XCTAssertEqual(s.terminalTheme, "Builtin Dark")
+        XCTAssertThrowsError(try SettingsJSON.set(&s, key: "terminalTheme", value: "Nope"))
+        try SettingsJSON.set(&s, key: "terminalTheme", value: .null)
+        XCTAssertNil(s.terminalTheme)
+    }
 }

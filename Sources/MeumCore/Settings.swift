@@ -74,6 +74,20 @@ public struct Settings: Codable, Equatable, Sendable {
     public var fontSize: Double = 13
     /// A Ghostty colour theme by name (one of the themes bundled with meum); nil keeps meum's own colours.
     public var terminalTheme: String?
+
+    /// A value that goes into a Ghostty config line (a font family, a theme name) without its control characters
+    /// and quotes, so it can never end that line and start another one.
+    public static func configSafe(_ value: String) -> String {
+        String(String.UnicodeScalarView(value.unicodeScalars.filter {
+            !CharacterSet.controlCharacters.contains($0) && $0 != "\"" && $0 != "\u{2028}" && $0 != "\u{2029}"
+        }))
+    }
+
+    /// Whether `name` can be a bundled theme's name: no path (Ghostty loads a theme given as a path as a config
+    /// file), nothing `configSafe` would change.
+    public static func isThemeName(_ name: String) -> Bool {
+        !name.isEmpty && !name.hasPrefix(".") && !name.contains("/") && !name.contains("\\") && configSafe(name) == name
+    }
     /// An extra Ghostty config file loaded after meum's own (and after `<state dir>/ghostty.conf`).
     public var ghosttyConfigPath: String?
     /// Clicks in the gaps between cards stay in meum instead of reaching the app behind.

@@ -447,4 +447,19 @@ final class HookInstallerTests: XCTestCase {
         XCTAssertEqual(d, "--- o\n+++ n\n@@ -3,3 +3,3 @@\n c\n-d\n+X\n e\n")
         XCTAssertEqual(TextDiff.unified(old: "same", new: "same", oldLabel: "o", newLabel: "n"), "")
     }
+
+    func testOnlyTheInstalledMeumRefreshesTheHookScript() {
+        let home = "/Users/u"
+        func may(_ p: String, isolated: Bool = false, debug: Bool = false) -> Bool {
+            HookInstaller.mayRefreshScript(bundlePath: p, home: home, isolated: isolated, debug: debug)
+        }
+        XCTAssertTrue(may("/Applications/meum.app"))
+        XCTAssertTrue(may("/Users/u/Applications/meum.app"))
+        XCTAssertFalse(may("/Users/u/Downloads/meum.app"), "an old DMG copy")
+        XCTAssertFalse(may("/Volumes/meum/meum.app"), "the DMG itself")
+        XCTAssertFalse(may("/Users/u/code/meum/App/.build/meum.app"), "a dev build")
+        XCTAssertFalse(may("/Applications/meum.app", isolated: true), "a test instance")
+        XCTAssertFalse(may("/Applications/meum.app", debug: true), "a debug instance")
+        XCTAssertFalse(may("/Applications/Other.app"))
+    }
 }

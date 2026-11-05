@@ -112,7 +112,10 @@ final class WidgetInstaller {
 
     func fetchCatalog() async throws -> WidgetCatalog {
         let urlString = settings().widgetCatalogURL
-        guard let url = URL(string: urlString) else { throw InstallError(description: "bad catalog URL \(urlString)") }
+        // https like the zips it lists (or a local file): the catalog names the hashes the zips are checked against
+        guard let url = URL(string: urlString), url.scheme == "https" || url.isFileURL else {
+            throw InstallError(description: "the widget library address must be https:// (or file://): \(urlString)")
+        }
         let data: Data
         if url.isFileURL {
             data = try Data(contentsOf: url)

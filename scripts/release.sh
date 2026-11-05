@@ -15,6 +15,7 @@
 # Usage: scripts/release.sh <version>          e.g. scripts/release.sh 0.2.0
 #   MEUM_RELEASE_IDENTITY   signing identity (default: the "Developer ID Application" in the keychain)
 #   MEUM_NOTARY_PROFILE     notarytool keychain profile (default: meum; see `xcrun notarytool store-credentials`)
+#   MEUM_RELEASE_GATE       with --publish: a local command that must succeed before publishing
 #   MEUM_SKIP_NOTARIZE=1    sign only (for a quick local check of the hardened-runtime build)
 #
 # Local everyday builds stay on scripts/build-app.sh with the self-signed identity: a Developer ID build is a
@@ -55,6 +56,10 @@ if [ "$PUBLISH" = 1 ]; then
     echo "release: zmx wire protocol $PUB_PROTO -> $NOW_PROTO: updated copies could not reach their running sessions." >&2
     echo "release: read scripts/zmx-protocol; pass --zmx-protocol-change to release anyway" >&2
     exit 1
+  fi
+  # a local command that must succeed before publishing (a review the release needs, say); run from the checkout
+  if [ -n "${MEUM_RELEASE_GATE:-}" ]; then
+    (cd "$R" && $MEUM_RELEASE_GATE) || { echo "release: the release gate (MEUM_RELEASE_GATE) refused; not publishing" >&2; exit 1; }
   fi
 fi
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

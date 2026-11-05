@@ -78,6 +78,14 @@ final class MainMenu: NSObject {
         }
         add(term, to: main)
 
+        // Window: registered as the app's windows menu, so macOS adds Fill, Centre, Move & Resize and the tiling
+        // items, as for any other app's window
+        let win = NSMenu(title: "Window")
+        win.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+        win.addItem(withTitle: "Zoom", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
+        add(win, to: main)
+        NSApp.windowsMenu = win
+
         // Help: registered as the app's help menu, so macOS adds its search field (it finds every menu item)
         let help = NSMenu(title: "Help")
         for (title, topic) in [("Getting Started", HelpWindowController.Topic.start),

@@ -25,6 +25,11 @@ final class WorkspaceController: NSObject, SidebarHost {
     private(set) var shownWorkspaceID: UUID?
     private let emptyHint = NSTextField(labelWithString: "")
     private let fixedFrame: CGRect?
+    /// The screen's visible frame when the window last matched it: a window still that size follows screen changes.
+    private var lastVisibleFrame: CGRect = .zero
+    private var lastLaidOutSize: CGSize = .zero
+    /// The top gap, which moves the window.
+    let dragStrip = WindowDragStrip()
 
     static let animationDuration: CFTimeInterval = 0.2
     /// The smallest a card gets when a split is resized with the mouse.
@@ -121,6 +126,8 @@ final class WorkspaceController: NSObject, SidebarHost {
         tipsCard.glass.reloadWallpaper()
         root.addSubview(tipsCard, positioned: .above, relativeTo: sidebarCard)
         widgetCards = [tipsCard]
+        // below every card: where a card reaches into the top gap (a small gap setting), the card gets the click
+        root.addSubview(dragStrip, positioned: .below, relativeTo: nil)
         dropOverlay.frame = root.bounds
         dropOverlay.autoresizingMask = [.width, .height]
         root.addSubview(dropOverlay)
@@ -135,6 +142,23 @@ final class WorkspaceController: NSObject, SidebarHost {
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
                                                object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.screenChanged() }
+        }
+        // a window manager (Rectangle, macOS tiling) may move or resize the window: the cards follow
+        lastVisibleFrame = window.screen?.visibleFrame ?? screen.visibleFrame
+        let nc = NotificationCenter.default
+        nc.addObserver(forName: NSWindow.didResizeNotification, object: window, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.windowResized() }
+        }
+        nc.addObserver(forName: NSWindow.didMoveNotification, object: window, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.reanchorGlass() }
+        }
+        nc.addObserver(forName: NSWindow.didChangeScreenNotification, object: window, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.lastVisibleFrame = self.window.screen?.visibleFrame ?? self.lastVisibleFrame
+                self.reloadWallpaper()
+                self.reanchorGlass()
+            }
         }
     }
 
@@ -198,13 +222,35 @@ final class WorkspaceController: NSObject, SidebarHost {
         for v in allCardHosts { v.glass.reloadWallpaper() }
     }
 
+    /// The display setup changed (a display added or removed, the Dock or menu bar resized). A window that filled
+    /// its screen keeps filling it; one a window manager placed stays where it is, pulled back onto a screen if
+    /// its screen is gone.
     private func screenChanged() {
         guard fixedFrame == nil, let screen = window.screen ?? NSScreen.main else { return }
-        window.setFrame(screen.visibleFrame, display: true)
+        let visible = screen.visibleFrame
+        if window.frame == lastVisibleFrame {
+            window.setFrame(visible, display: true)
+        } else if !NSScreen.screens.contains(where: { $0.visibleFrame.intersects(window.frame) }) {
+            window.setFrame(visible, display: true)
+        }
+        lastVisibleFrame = visible
         root.frame = NSRect(origin: .zero, size: window.frame.size)
         Wallpaper.shared.load(for: screen)
         for v in allCardHosts { v.glass.reloadWallpaper() }
         reconcile(animate: false)
+    }
+
+    /// The window got a new size (from a window manager): lay the cards out in it and give the terminals their size.
+    private func windowResized() {
+        guard root.bounds.size != lastLaidOutSize else { reanchorGlass(); return }
+        lastLaidOutSize = root.bounds.size
+        reconcile(animate: false)
+        for c in cardViews.values { c.commitSurfaceSizes() }
+    }
+
+    /// The window moved: every card's glass shows the wallpaper behind its new place on screen.
+    func reanchorGlass() {
+        for v in allCardHosts where !v.isHidden { v.glass.screenRect = screenRect(for: v.frame) }
     }
 
     // MARK: - Reconcile
@@ -213,6 +259,7 @@ final class WorkspaceController: NSObject, SidebarHost {
 
     /// Brings views and surfaces in line with the model.
     func reconcile(animate: Bool) {
+        dragStrip.frame = NSRect(x: 0, y: 0, width: root.bounds.width, height: max(gap, 8))
         var animate = animate
         let ws = selectedWorkspace
         if ws?.id != shownWorkspaceID {

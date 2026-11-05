@@ -64,6 +64,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.onHelp = { [weak self] in self?.help.show($0) }
         menu.onSettingsSection = { [weak self] in self?.settingsWindow.show(section: $0) }
         WidgetSlotCardView.onGetWidgets = { [weak self] in self?.settingsWindow.show(section: "widgets") }
+        SettingsJSON.themeNames = { GhosttyApp.shared.themeNames }
         control.onOpenSettings = { [weak self] in self?.settingsWindow.show(section: $0) }
         updates = UpdateCenter { [weak self] in self?.control.installer }
         updates.onChange = { [weak self] n in self?.menu.setUpdateCount(n) }
@@ -79,7 +80,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         widgets.reload()
         NSApp.activate(ignoringOtherApps: true)
         if options.debugDir == nil { updater.startAutomaticChecks() }
-        if !options.isolated { Self.refreshHookScript() }
+        if HookInstaller.mayRefreshScript(bundlePath: Bundle.main.bundlePath, home: NSHomeDirectory(),
+                                          isolated: options.isolated, debug: options.debugDir != nil) {
+            Self.refreshHookScript()
+        }
         updates.start()
 
         if let dir = options.debugDir {
@@ -95,7 +99,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// When meum's Claude hooks are installed, keeps the script they call (~/.local/bin/meum-hook) the same as this
-    /// version's copy, so a fresh or updated meum never leaves the hooks calling a missing or old file.
+    /// version's copy, so a fresh or updated meum never leaves the hooks calling a missing or old file. Only the
+    /// installed meum does this (`HookInstaller.mayRefreshScript`).
     static func refreshHookScript() {
         guard let src = Bundle.main.resourceURL?.appendingPathComponent("bin/meum-hook").path else { return }
         DispatchQueue.global(qos: .utility).async {

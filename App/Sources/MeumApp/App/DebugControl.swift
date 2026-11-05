@@ -260,6 +260,20 @@ final class DebugControl {
             default: throw Failure(description: "bad phase")
             }
             if args.count > 2, args[2] == "unread" { control.agents.markUnread(tabs: [tab.uuidString]) }
+        case "window-frame":
+            // window-frame X Y W H: sets the container window's frame (AppKit screen coordinates), as a window
+            // manager (Rectangle, macOS tiling) does through Accessibility
+            let v = args.compactMap(Double.init)
+            guard v.count == 4 else { throw Failure(description: "need X Y W H") }
+            controller.window.setFrame(NSRect(x: v[0], y: v[1], width: v[2], height: v[3]), display: true)
+        case "dump-frames":
+            // dump-frames FILE: the window frame, the root view's bounds and every card's frame and glass anchor
+            guard let path = args.first else { throw Failure(description: "need FILE") }
+            var lines = ["window \(controller.window.frame)", "root \(controller.root.bounds)"]
+            for v in controller.allCardHosts where !v.isHidden {
+                lines.append("card \(type(of: v)) frame \(v.frame) screen \(v.glass.screenRect)")
+            }
+            try lines.joined(separator: "\n").write(toFile: path, atomically: true, encoding: .utf8)
         case "snapshot":
             // stores an AgentSnapshot on the tab, as the integration step will from SessionStart hooks
             guard args.count >= 2 else { throw Failure(description: "need TAB SESSIONID") }
