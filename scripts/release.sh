@@ -1,6 +1,7 @@
 #!/bin/sh
 # Builds a meum release that opens on other people's Macs without Gatekeeper warnings:
-#   1. scripts/build-app.sh (release config, version from the argument), then scripts/api-smoke against that build
+#   1. scripts/setup.sh --check (the vendored Ghostty and zmx are exactly their pins and patches), then
+#      scripts/build-app.sh (release config, version from the argument), then scripts/api-smoke against that build
 #   2. re-sign every Mach-O in the bundle with the Developer ID, hardened runtime and a secure timestamp
 #      (the app itself with scripts/entitlements.plist)
 #   3. notarize the app and staple the ticket to it
@@ -11,29 +12,33 @@
 # running copies update from). --notes FILE gives the release text, else GitHub generates it.
 # --zmx-protocol-change lets --publish ship a zmx wire protocol other than the last public release's
 # (scripts/zmx-protocol). --meumkit-break lets a MeumKit change that is not an addition through (scripts/interface-diff).
+# --no-gate publishes without a release gate (MEUM_RELEASE_GATE, below).
 #
 # Usage: scripts/release.sh <version>          e.g. scripts/release.sh 0.2.0
 #   MEUM_RELEASE_IDENTITY   signing identity (default: the "Developer ID Application" in the keychain)
 #   MEUM_NOTARY_PROFILE     notarytool keychain profile (default: meum; see `xcrun notarytool store-credentials`)
-#   MEUM_RELEASE_GATE       with --publish: a local command that must succeed before publishing
+#   MEUM_RELEASE_GATE       with --publish: a local command that must succeed before publishing (it gets the
+#                           commit as its argument); --publish refuses without one unless --no-gate
 #   MEUM_SKIP_NOTARIZE=1    sign only (for a quick local check of the hardened-runtime build)
 #
 # Local everyday builds stay on scripts/build-app.sh with the self-signed identity: a Developer ID build is a
 # different signer to macOS, so installing it over a local build asks for privacy grants again (once).
 set -eu
 
-VERSION="${1:?usage: scripts/release.sh <version> [--publish [--notes FILE] [--zmx-protocol-change]]}"
+VERSION="${1:?usage: scripts/release.sh <version> [--publish [--notes FILE] [--zmx-protocol-change] [--meumkit-break] [--no-gate]]}"
 shift
 PUBLISH=0
 NOTES=""
 ZMX_CHANGE=0
 MEUMKIT_BREAK=0
+NO_GATE=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --publish) PUBLISH=1 ;;
     --notes) NOTES="${2:?--notes needs a file}"; shift ;;
     --zmx-protocol-change) ZMX_CHANGE=1 ;;
     --meumkit-break) MEUMKIT_BREAK=1 ;;
+    --no-gate) NO_GATE=1 ;;
     *) echo "release: unknown option $1" >&2; exit 2 ;;
   esac
   shift
@@ -58,8 +63,16 @@ if [ "$PUBLISH" = 1 ]; then
     exit 1
   fi
   # a local command that must succeed before publishing (a review the release needs, say); run from the checkout
+  # it gets the commit being released as its argument; without one set, --publish refuses unless --no-gate
   if [ -n "${MEUM_RELEASE_GATE:-}" ]; then
-    (cd "$R" && $MEUM_RELEASE_GATE) || { echo "release: the release gate (MEUM_RELEASE_GATE) refused; not publishing" >&2; exit 1; }
+    echo "release: gate: $MEUM_RELEASE_GATE"
+    (cd "$R" && $MEUM_RELEASE_GATE "$(git -C "$R" rev-parse HEAD)") ||
+      { echo "release: the release gate (MEUM_RELEASE_GATE) refused; not publishing" >&2; exit 1; }
+  elif [ "$NO_GATE" = 1 ]; then
+    echo "release: gate: none (--no-gate)"
+  else
+    echo "release: no release gate set (MEUM_RELEASE_GATE); set it, or pass --no-gate to publish without one" >&2
+    exit 1
   fi
 fi
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -75,6 +88,8 @@ ARCH="$(uname -m)"
 log() { echo "release: $*"; }
 
 BUILT=$(git -C "$ROOT" rev-parse HEAD)   # the commit this release is built from (full id)
+# the vendored dependencies go into the notarized app: refuse a tree edited after setup, or another checkout linked in
+"$ROOT/scripts/setup.sh" --check || { echo "release: vendor/ghostty or vendor/zmx is not its pinned version (scripts/setup.sh --check)" >&2; exit 1; }
 log "building $VERSION"
 MEUM_VERSION="$VERSION" "$ROOT/scripts/build-app.sh" release
 # every API method against the built app, isolated from the user's meum (state, widgets, zmx namespace)

@@ -40,6 +40,9 @@ final class DebugControl {
     var help: HelpWindowController?
     /// Links a status click would have opened (the debug instance opens nothing).
     var openedURLs: [String] = []
+    /// How a debug instance answers "open links of this kind?" (`link-answer yes|no`); each question is recorded.
+    var linkSchemeAnswer = false
+    var linkSchemeQuestions: [String] = []
     private var timer: Timer?
     private var counter = 0
 
@@ -241,6 +244,9 @@ final class DebugControl {
         case "resize":
             guard let d = Direction(rawValue: rest) else { throw Failure(description: "bad direction") }
             controller.resize(d)
+        case "link-answer":
+            // link-answer yes|no: the answer to the next "open links of this kind?" questions
+            linkSchemeAnswer = rest == "yes"
         case "agent":
             guard let control, args.count >= 2 else { throw Failure(description: "need TAB PHASE") }
             let tab = try surface(args[0]).tabID
@@ -498,6 +504,7 @@ final class DebugControl {
             "animating": controller.isAnimating,
             "tabDragging": controller.tabDrag != nil,
             "openedURLs": openedURLs,
+            "linkSchemeQuestions": linkSchemeQuestions,
             "statusLinks": controller.sidebarCard.sidebar.statusHits.map { h -> [String: Any] in
                 let r = controller.sidebarCard.sidebar.convert(h.0, to: controller.root)
                 return ["key": h.2, "frame": [r.minX, r.minY, r.width, r.height]]

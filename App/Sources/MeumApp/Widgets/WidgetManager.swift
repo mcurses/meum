@@ -226,7 +226,7 @@ final class WidgetManager {
     @discardableResult
     func reload() -> String? {
         // background programs first: they run whether or not the widget shows anywhere
-        helpers?.sync(scan().filter { !$0.disabled && (installer?.helperTrusted($0) ?? true) }.compactMap(\.helper))
+        helpers?.sync(scan().filter { !$0.disabled }.compactMap(runnableHelper))
         unloadAll()
         registrations = [:]
         trustByID = [:]
@@ -334,7 +334,7 @@ final class WidgetManager {
         guard helpers == nil, let c = controller else { return }
         helpers = WidgetHelpers(socketPath: c.paths.socket.path, stateDirectory: c.paths.directory,
                                 dataDirectory: { [weak self] id in self?.dataDirectory(for: id) ?? FileManager.default.temporaryDirectory })
-        helpers?.sync(scan().filter { !$0.disabled && (installer?.helperTrusted($0) ?? true) }.compactMap(\.helper))
+        helpers?.sync(scan().filter { !$0.disabled }.compactMap(runnableHelper))
     }
 
     /// Stops a widget's helper (before removing or replacing the widget). The next `reload` starts it again if
@@ -350,8 +350,16 @@ final class WidgetManager {
 
     /// Starts a widget's helper now, if it has one and is enabled and not running.
     func startHelper(id: String) {
-        guard let spec = entry(id).flatMap({ $0.disabled ? nil : $0.helper }), helpers?.running[spec.widgetID] == nil else { return }
+        guard let e = entry(id), !e.disabled, helpers?.running[id] == nil, let spec = runnableHelper(e) else { return }
         helpers?.start(spec)
+    }
+
+    /// The helper spec to run for an entry: the checked private copy (`WidgetInstaller.trustedHelper`), or nil
+    /// when it may not run. Without an installer (tests) the entry's own spec.
+    private func runnableHelper(_ e: Entry) -> WidgetHelpers.Spec? {
+        guard let installer else { return e.helper }
+        let base = controller?.paths.directory ?? FileManager.default.temporaryDirectory
+        return installer.trustedHelper(e, directory: base.appendingPathComponent("helpers/bin", isDirectory: true))
     }
 
     func stopAllHelpers() { helpers?.stopAll() }

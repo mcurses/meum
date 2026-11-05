@@ -38,6 +38,11 @@ final class BrowserWidget: NSObject, MeumWidget, WKNavigationDelegate, WKScriptM
     init(host: MeumWidgetHost) {
         self.host = host
         let config = WKWebViewConfiguration()
+        // Say "Safari" like Safari does: without it sites (Google among them) take the web view for an unknown
+        // browser and serve their old, basic pages.
+        let safari = Bundle(path: "/Applications/Safari.app")?.infoDictionary?["CFBundleShortVersionString"] as? String
+        let version = (safari ?? "26.0").split(separator: ".").prefix(2).joined(separator: ".")
+        config.applicationNameForUserAgent = "Version/\(version) Safari/605.1.15"
         // console errors and uncaught exceptions come back to the widget
         let hook = """
         (function(){

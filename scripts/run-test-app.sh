@@ -4,6 +4,7 @@
 #   debug dir   $MEUMT/dbg          (DebugControl: cmd, events.log, pid, window.id)
 #   widgets     $MEUMT/widgets      (never ~/.local/share/meum/widgets)
 #   zmx         ZMX_DIR=$TMPDIR/meumtest-zmx, session prefix "meumtest-" (never the user's zmx namespace)
+# MEUM_BACKGROUND=1 starts it behind other windows without taking focus (when someone is using the Mac).
 # MEUMT defaults to build/test. Extra args go to the app (e.g. --frame 100,100,1400,850).
 # Drive it with scripts/meumt (cmd, wait, shot, text). Stop it with `scripts/meumt quit` or kill <pid>.
 set -eu

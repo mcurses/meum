@@ -87,15 +87,27 @@ else
   CATALOG="$OUT/catalog.json"
 fi
 
-python3 -I - "$CATALOG" <<PY
+# the values go in through the environment, never pasted into the Python source
+W_ID="$ID" W_NAME="$NAME" W_DESC="$DESC" W_SCOPE="$SCOPE" W_VERSION="$VERSION" W_ARCHS="$ARCHS" W_URL="$URL" \
+W_SHA="$SHA" W_LIBSHA="$LIBSHA" W_HELPER="$HAS_HELPER" W_FLOOR="$(cat "$ROOT/widgets/MINIMUM_MEUM")" \
+W_MIN="${MEUM_MIN_MEUM:-$(cat "$ROOT/widgets/MINIMUM_MEUM")}" python3 -I - "$CATALOG" <<'PY'
 import json, os, sys
+v = os.environ
 p = sys.argv[1]
 c = json.load(open(p)) if os.path.exists(p) else {"version": 1, "widgets": []}
-e = {"id": "$ID", "displayName": "$NAME", "description": """$DESC""", "author": "Max Studanski", "scope": "$SCOPE",
-     "version": "$VERSION", "apiVersion": "meum.v1", "archs": "$ARCHS".split(), "url": "$URL", "sha256": "$SHA",
-     "librarySha256": "$LIBSHA", "minMeum": "${MEUM_MIN_MEUM:-$(cat "$ROOT/widgets/MINIMUM_MEUM")}",
-     "helper": $( [ "$HAS_HELPER" = true ] && echo True || echo False )}
+e = {"id": v["W_ID"], "displayName": v["W_NAME"], "description": v["W_DESC"], "author": "Max Studanski",
+     "scope": v["W_SCOPE"], "version": v["W_VERSION"], "apiVersion": "meum.v1", "archs": v["W_ARCHS"].split(),
+     "url": v["W_URL"], "sha256": v["W_SHA"], "librarySha256": v["W_LIBSHA"], "minMeum": v["W_MIN"],
+     "helper": v["W_HELPER"] == "true"}
 c["widgets"] = [w for w in c["widgets"] if w["id"] != e["id"]] + [e]
+# Once MeumKit has grown past what meum 0.3.0 shipped, an entry without minMeum would be offered to meums too old for
+# it: every entry must then say which meum it needs (re-release it, or give it minMeum by hand).
+key = lambda s: tuple(int(x) for x in s.split("."))
+if key(v["W_FLOOR"]) > key("0.3.0"):
+    missing = [w["id"] for w in c["widgets"] if not w.get("minMeum")]
+    if missing:
+        sys.exit(f"release-widget: catalog entries without minMeum: {', '.join(missing)} "
+                 f"(widgets/MINIMUM_MEUM is {v['W_FLOOR']}); not written")
 c["widgets"].sort(key=lambda w: w["displayName"].lower())
 json.dump(c, open(p, "w"), indent=2, ensure_ascii=False); open(p, "a").write("\n")
 PY

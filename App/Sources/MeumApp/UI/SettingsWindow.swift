@@ -110,6 +110,16 @@ struct SettingsView: View {
                 Toggle("Pin on pinned workspaces", isOn: plainBool("sidebarShowPin") { $0.sidebarShowPin })
                 Text("Status entries come from `meum status set`, metadata from `meum workspace meta`, the label chips from `meum workspace labels`. Folder and branch follow the focused tab. A port opens localhost in the browser.")
                     .font(.caption).foregroundStyle(.secondary)
+                if !s.statusLinkSchemes.isEmpty {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("Status links that open without asking")
+                            Text(s.statusLinkSchemes.map { "\($0):" }.joined(separator: ", ")).font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("Forget") { set("statusLinkSchemes", .array([])) }
+                    }
+                }
             }
             WidgetsSection(model: model, widgets: widgets, updates: updates, set: set).id("widgets")
             Section("Background") {

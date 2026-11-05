@@ -71,6 +71,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updater.onAvailable = { [weak self] v in self?.updates.setAppUpdate(v) }
         settingsWindow.updates = updates
         menu.install(settings: settings.value)
+        controller.background = options.background
         controller.start()
         widgets = WidgetManager(controller: controller, control: control, directory: options.widgetsDir)
         control.widgets = widgets
@@ -78,7 +79,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settingsWindow.widgets = widgets
         widgets.startHelpers()
         widgets.reload()
-        NSApp.activate(ignoringOtherApps: true)
+        if !options.background { NSApp.activate(ignoringOtherApps: true) }
         if options.debugDir == nil { updater.startAutomaticChecks() }
         if HookInstaller.mayRefreshScript(bundlePath: Bundle.main.bundlePath, home: NSHomeDirectory(),
                                           isolated: options.isolated, debug: options.debugDir != nil) {
@@ -89,6 +90,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let dir = options.debugDir {
             debug = DebugControl(dir: dir, controller: controller, control: control)
             controller.openURL = { [weak debug] in debug?.openedURLs.append($0.absoluteString) }
+            controller.confirmLinkScheme = { [weak debug] scheme, _, _ in
+                debug?.linkSchemeQuestions.append(scheme)
+                return debug?.linkSchemeAnswer ?? false
+            }
             debug?.settingsWindow = settingsWindow
             debug?.help = help
             debug?.start()

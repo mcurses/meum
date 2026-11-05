@@ -10,6 +10,9 @@ a request `{"id": 1, "method": "workspace.list", "params": {…}}` gets `{"id": 
 a running meum serves; a client should ask before it relies on a newer one. Changes are additions only: a new
 method, a new optional parameter with a default, a new field in an answer.
 
+The app's bundle identifier `io.github.mcurses.meum` is part of `meum.v1`: tools find meum by it (to tell
+whether it is the app in front, say), and it stays the same across any rename of the app.
+
 ## Methods
 
 ### system
@@ -23,7 +26,7 @@ method, a new optional parameter with a default, a new field in an answer.
 
 ### workspace
 
-- `workspace.list`: `{}` -> `[{id, name, …}]`: every workspace in sidebar order. Workspaces are named by id or by a unique name everywhere.
+- `workspace.list`: `{}` -> `[{id, name, selected, focusedTabID, focusedCardID, tabCount, cwd, cwds, branch, remotes, color, icon, pinned, group, labels, metadata, status, ports, agents}]`: every workspace in sidebar order; `selected` is the one shown, `focusedTabID` its focused tab (null without one), `labels` the workspace's own chips. Workspaces are named by id or by a unique name everywhere.
 - `workspace.new`: `{name?, cwd?, color?}` -> `{id}`: a new workspace with one terminal tab.
 - `workspace.select`: `{id}`: shows the workspace.
 - `workspace.rename`: `{id, name}`.
@@ -56,7 +59,7 @@ method, a new optional parameter with a default, a new field in an answer.
 - `tab.select`: `{tab}`: shows the tab (and its workspace).
 - `tab.close`: `{tab}`: closes the tab and ends its terminal.
 - `tab.sendText`: `{tab, text}`: typed into the tab's terminal as keystrokes; a newline submits.
-- `tab.focused`: `{}` -> `{workspace, tab, widget, name}`: the selected workspace and its focused tab (a terminal or a widget tab); `name` is the Claude Code session's own name, null without one.
+- `tab.focused`: `{}` -> `{workspace, tab, widget, name, labels}`: the selected workspace's id and its focused tab (a terminal or a widget tab; `widget` is the widget id, null for a terminal); `name` is the Claude Code session's own name, null without one; `labels` the labels that session set on its tab (`tab.setLabels`, empty without).
 - `tab.setLabels`: `{tab, labels: [string]}` -> `{tab, labels}`: short labels an agent attaches to its session (at most 4, each at most 24 characters), shown as chips on its tab and workspace row; an empty list clears them. They belong to the tab's Claude session and are dropped when it ends; a tab without one answers `unavailable`.
 - `tab.paste`: `{tab, text, submit?}` -> `{tab, submitted}`: text pasted into a tab's terminal as a paste (bracketed when its program enabled mode 2004), wherever that tab is; no focus change, no clipboard. `submit: true` presses Return after the text on the same path, so it can't overtake it (meum before 0.5 ignores it and omits `submitted`). Errors: not_found (no such tab), unavailable (a widget tab, or a terminal not attached yet: its workspace was not shown since meum started).
 - `tab.move`: `{tab, card?, index?, split?: "left"|"right"|"up"|"down"}`: without `split`, into `card` (default its own) at `index`; with `split`, into a new card on that side of `card`. An emptied card is removed; the target may be in another workspace.

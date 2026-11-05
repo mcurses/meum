@@ -2,16 +2,21 @@
 """Compares meum's two public interfaces with the last public release (a git ref, default github/main) and refuses
 what would break their users. scripts/release.sh --publish runs it.
 
-  MeumKit (Sources/MeumKit/*.swift), what widget libraries link against: "additions only, each with a default".
-    - a public declaration line of the release that is gone or changed: refused (widgets built against the release
-      would fail to load); --allow-break lets a deliberate break through
-    - new public declaration lines: listed; widgets/MINIMUM_MEUM must then name the version being
-      released, so the catalog's minMeum keeps widgets that use them away from older meums
+  MeumKit, what widget libraries link against: "additions only, each with a default". Both sides are the module
+  interface the compiler prints for Sources/MeumKit (swiftc -emit-module-interface-path, library evolution), the
+  release's from its own sources, so every declaration counts, protocol requirements and their defaults included.
+    - a declaration of the release that is gone or changed: refused (widgets built against the release would fail
+      to load); --allow-break lets a deliberate break through
+    - a requirement added to a protocol without a default in an extension of it: refused (a widget built before it
+      does not implement it, and meum's first call to it would trap); --allow-break lets it through
+    - other new declarations: listed; widgets/MINIMUM_MEUM must then name the version being released, so the
+      catalog's minMeum keeps widgets that use them away from older meums
   The control API (docs/api.md, generated): a method or event of the release that is gone is refused.
 
 Usage: scripts/interface-diff <version being released> [<ref>] [--allow-break]
+       scripts/interface-diff --self-test        (the comparison against fixtures; also runs before every check)
 """
-import os, re, subprocess, sys
+import os, re, subprocess, sys, tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -21,41 +26,124 @@ def git(*a):
     return r.stdout if r.returncode == 0 else None
 
 
-def public_lines(text):
-    """Public declarations, whitespace-normalised, comments dropped."""
-    out = set()
-    for line in text.splitlines():
-        line = line.split("//")[0].strip()
-        if re.match(r"(@\w+\s+)*(public|open)\s", line):
-            out.add(re.sub(r"\s+", " ", line))
+def interface(sources):
+    """The module interface swiftc prints for MeumKit from {file name: source text}."""
+    with tempfile.TemporaryDirectory() as d:
+        paths = []
+        for name, text in sources.items():
+            p = os.path.join(d, name)
+            with open(p, "w") as f:
+                f.write(text)
+            paths.append(p)
+        out = os.path.join(d, "MeumKit.swiftinterface")
+        r = subprocess.run(["xcrun", "swiftc", "-typecheck", "-enable-library-evolution", "-swift-version", "5",
+                            "-module-name", "MeumKit", "-emit-module-interface-path", out, *paths],
+                           capture_output=True, text=True)
+        if r.returncode != 0:
+            sys.exit("interface-diff: swiftc could not print MeumKit's interface:\n" + r.stderr)
+        return open(out).read()
+
+
+def declarations(text):
+    """{key: (context, line)}: each declaration line with the chain of blocks it sits in, as one key."""
+    out, stack = {}, []
+    for raw in text.splitlines():
+        line = re.sub(r"\s+", " ", raw.strip())
+        if not line or line.startswith("//") or line.startswith("import "):
+            continue
+        if line == "}":
+            if stack:
+                stack.pop()
+            continue
+        context = " > ".join(stack)
+        out[context + " :: " + line] = (context, line)
+        if line.endswith("{"):
+            stack.append(line[:-1].strip())
     return out
 
 
-def api_names(text):
-    return set(re.findall(r"^- `([\w.]+)`:", text, re.M))
+def bare(line):
+    """A member without attributes, `public`, accessors or a body: what a requirement and its default share."""
+    line = re.sub(r"^(@[\w:.]+(\([^)]*\))?\s+)+", "", line)
+    line = re.sub(r"\b(public|open|final|nonisolated)\s+", "", line)
+    return re.sub(r"\s*\{.*$|\s*\{$", "", line).strip()
+
+
+def protocol_name(context):
+    m = re.search(r"\bprotocol (\w+)", context.split(" > ")[-1]) if context else None
+    return m.group(1) if m else None
+
+
+def compare(before_text, now_text):
+    """(gone, added, requirements without a default), each a sorted list of readable lines."""
+    before, now = declarations(before_text), declarations(now_text)
+    gone = sorted(f"{c} :: {l}" if c else l for k, (c, l) in before.items() if k not in now)
+    added_keys = [k for k in now if k not in before]
+    added = sorted(f"{now[k][0]} :: {now[k][1]}" if now[k][0] else now[k][1] for k in added_keys)
+    defaults = {}
+    for c, l in now.values():
+        m = re.match(r"extension (?:\w+::)?(\w+)\b", c.split(" > ")[-1]) if c else None
+        if m and " > " not in c:
+            defaults.setdefault(m.group(1), set()).add(bare(l))
+    undefaulted = []
+    for k in added_keys:
+        c, l = now[k]
+        p = protocol_name(c)
+        if p and " > " not in c and bare(l) not in defaults.get(p, set()):
+            undefaulted.append(f"{p}: {l}")
+    return gone, added, sorted(undefaulted)
+
+
+def self_test():
+    base = "public protocol W: AnyObject {\n  var view: Int { get }\n  func a()\n}\n" \
+           "public extension W {\n  func a() {}\n}\n"
+    plus_bare = base.replace("  func a()\n}", "  func a()\n  func b()\n}")
+    plus_default = plus_bare.replace("  func a() {}\n}", "  func a() {}\n  func b() {}\n}")
+    plus_var = base.replace("  func a()\n}", "  func a()\n  var c: Bool { get }\n}") \
+                   .replace("  func a() {}\n}", "  func a() {}\n  var c: Bool { false }\n}")
+    fewer = base.replace("  func a()\n}", "}").replace("public extension W {\n  func a() {}\n}\n", "")
+    i = {k: interface({"W.swift": v}) for k, v in
+         [("base", base), ("bare", plus_bare), ("default", plus_default), ("var", plus_var), ("fewer", fewer)]}
+    checks = [
+        ("a requirement without a default is seen", compare(i["base"], i["bare"])[2] != []),
+        ("a requirement with a default passes", compare(i["base"], i["default"])[2] == []),
+        ("a property requirement with a default passes", compare(i["base"], i["var"])[2] == []),
+        ("an addition is listed", compare(i["base"], i["default"])[1] != []),
+        ("a removed requirement is seen", compare(i["base"], i["fewer"])[0] != []),
+        ("no change is no change", compare(i["base"], i["base"]) == ([], [], [])),
+    ]
+    failed = [name for name, ok in checks if not ok]
+    if failed:
+        sys.exit("interface-diff: self-test failed: " + "; ".join(failed))
 
 
 def main():
+    if "--self-test" in sys.argv:
+        self_test()
+        print("interface-diff: self-test ok")
+        return
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     allow_break = "--allow-break" in sys.argv
     if not args:
         sys.exit(__doc__)
     version, ref = args[0], (args[1] if len(args) > 1 else "github/main")
+    self_test()
     problems = []
 
-    files = sorted(f for f in os.listdir(os.path.join(ROOT, "Sources/MeumKit")) if f.endswith(".swift"))
-    now = set().union(*(public_lines(open(os.path.join(ROOT, "Sources/MeumKit", f)).read()) for f in files))
-    before = set()
-    for f in (git("ls-tree", "--name-only", f"{ref}:Sources/MeumKit") or "").split():
-        if f.endswith(".swift"):
-            before |= public_lines(git("show", f"{ref}:Sources/MeumKit/{f}") or "")
-    if not before:
+    kit = os.path.join(ROOT, "Sources/MeumKit")
+    now = interface({f: open(os.path.join(kit, f)).read() for f in os.listdir(kit) if f.endswith(".swift")})
+    names = [f for f in (git("ls-tree", "--name-only", f"{ref}:Sources/MeumKit") or "").split() if f.endswith(".swift")]
+    if not names:
         print(f"interface-diff: no MeumKit in {ref}; nothing to compare")
     else:
-        gone, added = sorted(before - now), sorted(now - before)
+        before = interface({f: git("show", f"{ref}:Sources/MeumKit/{f}") or "" for f in names})
+        gone, added, undefaulted = compare(before, now)
         if gone and not allow_break:
             problems.append("MeumKit declarations of the last release are gone or changed (widgets built against it "
                             "would not load):\n    " + "\n    ".join(gone))
+        if undefaulted and not allow_break:
+            problems.append("protocol requirements added without a default in an extension (a widget built before "
+                            "them would trap when meum calls them):\n    " + "\n    ".join(undefaulted))
         if added:
             print("interface-diff: MeumKit grew:\n    " + "\n    ".join(added))
             minimum = open(os.path.join(ROOT, "widgets/MINIMUM_MEUM")).read().strip()
@@ -67,7 +155,8 @@ def main():
 
     old_api = git("show", f"{ref}:docs/api.md")
     if old_api:
-        gone = sorted(api_names(old_api) - api_names(open(os.path.join(ROOT, "docs/api.md")).read()))
+        api = lambda t: set(re.findall(r"^- `([\w.]+)`:", t, re.M))
+        gone = sorted(api(old_api) - api(open(os.path.join(ROOT, "docs/api.md")).read()))
         if gone:
             problems.append("control API methods or events of the last release are gone: " + ", ".join(gone))
         else:

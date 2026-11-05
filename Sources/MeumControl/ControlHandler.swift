@@ -22,7 +22,7 @@ public enum MeumMethod {
     public static let ping = "system.ping"
     /// `{}` -> the whole model: workspaces with their groups, cards, tabs, labels, status entries and agent states.
     public static let tree = "tree"
-    /// `{}` -> `[{id, name, …}]`: every workspace in sidebar order. Workspaces are named by id or by a unique name everywhere.
+    /// `{}` -> `[{id, name, selected, focusedTabID, focusedCardID, tabCount, cwd, cwds, branch, remotes, color, icon, pinned, group, labels, metadata, status, ports, agents}]`: every workspace in sidebar order; `selected` is the one shown, `focusedTabID` its focused tab (null without one), `labels` the workspace's own chips. Workspaces are named by id or by a unique name everywhere.
     public static let workspaceList = "workspace.list"
     /// `{name?, cwd?, color?}` -> `{id}`: a new workspace with one terminal tab.
     public static let workspaceNew = "workspace.new"
@@ -70,8 +70,9 @@ public enum MeumMethod {
     public static let tabClose = "tab.close"
     /// `{tab, text}`: typed into the tab's terminal as keystrokes; a newline submits.
     public static let tabSendText = "tab.sendText"
-    /// `{}` -> `{workspace, tab, widget, name}`: the selected workspace and its focused tab (a terminal or a widget
-    /// tab); `name` is the Claude Code session's own name, null without one.
+    /// `{}` -> `{workspace, tab, widget, name, labels}`: the selected workspace's id and its focused tab (a terminal or a
+    /// widget tab; `widget` is the widget id, null for a terminal); `name` is the Claude Code session's own name, null
+    /// without one; `labels` the labels that session set on its tab (`tab.setLabels`, empty without).
     public static let tabFocused = "tab.focused"
     /// `{tab, labels: [string]}` -> `{tab, labels}`: short labels an agent attaches to its session (at most 4, each at
     /// most 24 characters), shown as chips on its tab and workspace row; an empty list clears them. They belong to the

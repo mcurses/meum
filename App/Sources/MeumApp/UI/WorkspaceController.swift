@@ -162,12 +162,15 @@ final class WorkspaceController: NSObject, SidebarHost {
         }
     }
 
+    /// A test instance started with `--background`: its window goes behind the others and takes no focus.
+    var background = false
+
     func start() {
         watchWidgetClicks()
         if store.state.workspaces.isEmpty {
             store.mutate(.structure(animate: false)) { $0.addWorkspace(.make(name: "Workspace 1", cwd: NSHomeDirectory())) }
         }
-        window.makeKeyAndOrderFront(nil)
+        if background { window.orderBack(nil) } else { window.makeKeyAndOrderFront(nil) }
         reconcile(animate: false)
     }
 
@@ -886,6 +889,28 @@ final class WorkspaceController: NSObject, SidebarHost {
     func sidebarStatusClicked(_ id: UUID, key: String) {
         guard let entry = workspaceExtras[id]?.status.first(where: { $0.key == key })?.entry else { return }
         onStatusClicked?(id, key, entry)
-        if let s = entry.url, let url = URL(string: s) { openURL(url) }
+        guard let s = entry.url, let url = URL(string: s) else { return }
+        switch StatusLink.decide(url, allowed: settings.statusLinkSchemes) {
+        case .open: openURL(url)
+        case .refuse: Log.error("status link \(s): not a URL meum opens")
+        case .ask(let scheme):
+            let name = store.state.workspace(id)?.name ?? "a workspace"
+            guard confirmLinkScheme(scheme, url, name) else { return }
+            setSetting?("statusLinkSchemes", .array((settings.statusLinkSchemes + [scheme]).map { .string($0) }))
+            openURL(url)
+        }
+    }
+
+    /// Asks whether links of a new kind may open from status entries (yes: this one opens and later ones of the kind
+    /// open without asking). A debug instance answers from `DebugControl.linkSchemeAnswer` instead.
+    var confirmLinkScheme: (_ scheme: String, _ url: URL, _ workspace: String) -> Bool = { scheme, url, workspace in
+        let alert = NSAlert()
+        alert.messageText = "Open “\(scheme):” links from the sidebar?"
+        alert.informativeText = "A status entry in \(workspace) links to \(url.absoluteString)\n\nAny program running in a tab "
+            + "can set a status entry. Links of this kind can open apps or change settings. If you allow them, later "
+            + "\(scheme): links open without asking (Settings ▸ Sidebar lists them)."
+        alert.addButton(withTitle: "Open and Allow")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
     }
 }

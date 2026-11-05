@@ -18,6 +18,8 @@
 //   widgetTeamIDs [Team ID…]   Developer ID teams whose signed widgets load without a pinned hash
 //   widgetDeveloperMode bool   load unverified widgets too
 //   (the three widget* trust keys are read-only here: settings.set refuses them, Settings ▸ Widgets changes them)
+//   statusLinkSchemes [scheme…]   link schemes besides http(s) a status entry's click opens without asking; added
+//                               when the user says yes in meum, read-only here like the widget trust keys
 //   shortcuts {actionID: "cmd+shift+r" | null}   every action's combination in effect (null = none); setting it
 //                                               takes an object of the actions to change
 //   shortcut.<actionID> "cmd+shift+r" | "none" | null   one action; "none" removes its shortcut, null restores
@@ -31,7 +33,16 @@ public enum SettingsJSON {
     /// The bundled theme names, for checking `terminalTheme` (the app sets it; nil accepts any plain name).
     nonisolated(unsafe) public static var themeNames: (() -> [String])?
 
-    public static let socketReadOnly: Set<String> = ["widgetDeveloperMode", "widgetTeamIDs", "widgetCatalogURL"]
+    public static let socketReadOnly: Set<String> = ["widgetDeveloperMode", "widgetTeamIDs", "widgetCatalogURL",
+                                                     "statusLinkSchemes"]
+
+    /// The refusal a socket client gets for a read-only key.
+    public static func socketRefusal(_ key: String) -> String {
+        key == "statusLinkSchemes"
+            ? "'statusLinkSchemes' can't be changed from a program: meum asks the user on the first click on a link of "
+                + "a new kind, so nothing running in a tab can allow one for itself"
+            : trustRefusal("'\(key)'")
+    }
 
     /// The refusal a socket client gets for a trust change (`what`: the setting or the command it tried).
     public static func trustRefusal(_ what: String) -> String {
@@ -42,7 +53,7 @@ public enum SettingsJSON {
     public static let keys: [String] = [
         "cardGap", "cornerRadius", "sidebarWidth", "sidebarCollapsed", "widgetHeight", "widgetOrder", "widgetCatalogURL", "widgetTeamIDs", "widgetDeveloperMode", "background", "wallpaper", "liquidStyle", "focusFrameSaturation", "focusFrameOpacity", "glassBlur", "glassTint",
         "solidColor", "fontFamily", "fontSize", "terminalTheme", "ghosttyConfigPath", "gapsCatchClicks", "reattachSessions",
-        "resumeClaude", "shortcuts", "checkUpdates", "showStartHint",
+        "resumeClaude", "shortcuts", "checkUpdates", "showStartHint", "statusLinkSchemes",
     ] + sidebarShowKeys
 
     /// The sidebar row's show/hide switches.
@@ -92,6 +103,7 @@ public enum SettingsJSON {
         case "sidebarShowAgentDots": return .bool(s.sidebarShowAgentDots)
         case "sidebarShowShortcuts": return .bool(s.sidebarShowShortcuts)
         case "sidebarShowPin": return .bool(s.sidebarShowPin)
+        case "statusLinkSchemes": return .array(s.statusLinkSchemes.map { .string($0) })
         case "shortcuts":
             return .object(Dictionary(uniqueKeysWithValues: Shortcuts.actions.map { a in
                 (a.id, Shortcuts.combo(a.id, in: s).map { .string($0.text) } ?? .null)
@@ -209,6 +221,12 @@ public enum SettingsJSON {
         case "sidebarShowAgentDots": s.sidebarShowAgentDots = try bool()
         case "sidebarShowShortcuts": s.sidebarShowShortcuts = try bool()
         case "sidebarShowPin": s.sidebarShowPin = try bool()
+        case "statusLinkSchemes":
+            let items = v.isNull ? [] : v.arrayValue?.compactMap(\.stringValue).map { $0.lowercased() }
+            guard let items, items.allSatisfy({ StatusLink.isScheme($0) && !StatusLink.alwaysOpen.contains($0) }) else {
+                throw ControlError.invalidParams("'statusLinkSchemes' needs a list of URL schemes other than http(s)")
+            }
+            s.statusLinkSchemes = Array(NSOrderedSet(array: items)).compactMap { $0 as? String }
         case "shortcuts":
             guard let o = v.objectValue else { throw ControlError.invalidParams("'shortcuts' needs an object {actionID: combination}") }
             for (id, c) in o { try setShortcut(&s, id: id, value: c) }

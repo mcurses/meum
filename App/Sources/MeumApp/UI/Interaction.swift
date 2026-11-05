@@ -12,6 +12,8 @@ import QuartzCore
 /// transparent pixels through to the app behind, so this view paints a 1% fill: only these strips catch the
 /// mouse, the rest of the gaps stay click-through (unless `gapsCatchClicks`).
 final class DividerView: NSView {
+    /// A drag on a divider resizes cards, also where it crosses the title bar strip.
+    override var mouseDownCanMoveWindow: Bool { false }
     let splitID: UUID
     var axis: SplitAxis { didSet { if axis != oldValue { window?.invalidateCursorRects(for: self) } } }
     var onDrag: ((DividerView, NSPoint) -> Void)?

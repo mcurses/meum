@@ -39,6 +39,9 @@ public struct Settings: Codable, Equatable, Sendable {
     public var sidebarShowAgentDots: Bool = true   // one dot per Claude session
     public var sidebarShowShortcuts: Bool = true   // the ⌘1…⌘9 hints
     public var sidebarShowPin: Bool = true   // the pin on pinned workspaces
+    /// Link schemes (besides http and https) a status entry's click may open without asking: each added when the
+    /// user said yes to its first link (`StatusLink`). Changed only in meum, never over the socket.
+    public var statusLinkSchemes: [String] = []
     /// Height of the widget card under the sidebar, unless `widgetHeightAuto`.
     public var widgetHeight: Double = 150
     /// The widget card takes the hosted widget's own height (150 when it has none).
@@ -123,6 +126,7 @@ public struct Settings: Codable, Equatable, Sendable {
         sidebarShowAgentDots = v(.sidebarShowAgentDots, d.sidebarShowAgentDots)
         sidebarShowShortcuts = v(.sidebarShowShortcuts, d.sidebarShowShortcuts)
         sidebarShowPin = v(.sidebarShowPin, d.sidebarShowPin)
+        statusLinkSchemes = v(.statusLinkSchemes, d.statusLinkSchemes)
         widgetHeight = v(.widgetHeight, d.widgetHeight)
         widgetHeightAuto = v(.widgetHeightAuto, d.widgetHeightAuto)
         widgetOrder = v(.widgetOrder, d.widgetOrder)

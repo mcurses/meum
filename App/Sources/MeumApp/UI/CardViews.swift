@@ -193,6 +193,11 @@ class CardHostView: NSView {
 
     required init?(coder: NSCoder) { fatalError() }
 
+    /// The window is titled, so AppKit moves it on a drag anywhere in the title bar strip that isn't covered by a
+    /// view saying no here. Cards say no for themselves and everything in them (tabs, terminals, widgets): a drag
+    /// there is the card's own. Only the top gap and the sidebar's header move the window.
+    override var mouseDownCanMoveWindow: Bool { false }
+
     var content: NSView { glass.content }
 
     /// Places the card. `frame` is in the container's (flipped) coordinates, `screenRect` in screen coordinates.

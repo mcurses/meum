@@ -72,16 +72,43 @@ final class WidgetInstaller {
         e.helper.flatMap { try? WidgetHash.sha256(of: URL(fileURLWithPath: $0.executable)) }
     }
 
-    /// Whether a widget's background helper may run (checked before every start).
-    func helperTrusted(_ e: WidgetManager.Entry) -> Bool {
-        guard let spec = e.helper else { return true }
-        let url = URL(fileURLWithPath: spec.executable)
+    /// The helper to run for a widget, or nil when it may not run. The executable is copied into `directory`
+    /// (meum's own, 0700) first and the copy is checked, by hash and signature; the spec returned runs that copy, so
+    /// replacing the file in the widget folder after the check changes nothing. The copy is named after its hash:
+    /// an unchanged helper keeps its path, and a running one is left alone on reload.
+    func trustedHelper(_ e: WidgetManager.Entry, directory: URL) -> WidgetHelpers.Spec? {
+        guard var spec = e.helper else { return nil }
+        let fm = FileManager.default
+        try? fm.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try? fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+        let staging = directory.appendingPathComponent(".\(e.id)-\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: staging) }
+        guard (try? fm.copyItem(at: URL(fileURLWithPath: spec.executable), to: staging)) != nil,
+              let hash = try? WidgetHash.sha256(of: staging) else {
+            Log.error("widget \(e.id): helper \(spec.executable) could not be read; not started")
+            return nil
+        }
         let s = settings()
-        guard let hash = try? WidgetHash.sha256(of: url) else { return false }
-        let t = WidgetTrust.decideHelper(id: e.id, sha256: hash, signedTeam: Self.signedTeam(url, allowed: s.widgetTeamIDs),
+        let t = WidgetTrust.decideHelper(id: e.id, sha256: hash, signedTeam: Self.signedTeam(staging, allowed: s.widgetTeamIDs),
                                          pins: pins, teams: s.widgetTeamIDs, developerMode: s.widgetDeveloperMode)
-        if !t.allowsLoading { Log.error("widget \(e.id): helper not started (not verified)") }
-        return t.allowsLoading
+        guard t.allowsLoading else {
+            Log.error("widget \(e.id): helper not started (not verified)")
+            return nil
+        }
+        let copy = directory.appendingPathComponent("\(e.id)-\(hash)")
+        if !fm.fileExists(atPath: copy.path) {
+            do { try fm.moveItem(at: staging, to: copy) } catch {
+                Log.error("widget \(e.id): helper copy failed: \(error)")
+                return nil
+            }
+        }
+        // older copies of this widget's helper (a running one keeps its file open)
+        for name in (try? fm.contentsOfDirectory(atPath: directory.path)) ?? []
+        where name.hasPrefix("\(e.id)-") && name != copy.lastPathComponent {
+            try? fm.removeItem(at: directory.appendingPathComponent(name))
+        }
+        spec.executable = copy.path
+        return spec
     }
 
     /// The first allowed team whose valid, Apple-anchored Developer ID signature the file carries.

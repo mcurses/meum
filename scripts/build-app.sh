@@ -8,7 +8,7 @@
 #   Contents/Resources/bin/zmx         the bundled zmx
 #   Contents/Resources/bin/meum         the `meum` CLI (root package); bin/ is prepended to PATH in every tab
 #   Contents/Resources/bin/meum-hook    the Claude Code hook forwarder (Resources/bin/meum-hook)
-#   Contents/Resources/meum.icns       the app icon (Resources/icon/, made from meum-1024.png)
+#   Contents/Resources/meum.icns       the app icon (Resources/icon/, made from meum-1024-opaque.png)
 #   Contents/Frameworks/libMeumKit.dylib the widget interface, shared with every widget library at run time
 # Run scripts/setup.sh first (it short-circuits when vendor/ is ready).
 #

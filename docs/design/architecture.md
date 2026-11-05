@@ -35,10 +35,14 @@ change `Package.swift`, it keeps the change minimal and says so in its report.
   - `MEUM_SOCKET`
   - `MEUM_WORKSPACE`: workspace UUID
   - `MEUM_TAB`: tab UUID
+  - `MEUM_CLI`: the `meum` command of the app that runs the tab (the Claude Code plugin's MCP server uses it)
+  - `PATH` with the bundle's `bin/` (`meum`, `meum-hook`) in front
   - `TERM=xterm-ghostty`, `COLORTERM=truecolor`
   - `GHOSTTY_RESOURCES_DIR` from the bundle
-- **Env removed from every tab:** inherited `CMUX_*`, `GHOSTTY_*` (re-set from the bundle), `TERMINFO`,
-  `CLAUDE_CONFIG_DIR`.
+- **Env removed from every tab** (`ProcessEnvironment.scrub`, before libghostty starts): every inherited
+  `CLAUDE*` variable (a meum started from inside Claude Code must not make a `claude` in a tab think it is nested
+  or bind it to another profile), `CMUX_*`, `GHOSTTY_*` (re-set from the bundle), `MEUM_*`, `TERMINFO`,
+  `ZMX_SESSION`, `TERM_PROGRAM*`, `TMUX*`, `ITERM_SESSION_ID`, `TERM_SESSION_ID`.
 - **zmx session name per tab:** `meum-<first 12 hex chars of tab UUID>`. The bundled zmx is used.
 
 ## Model (MeumCore)

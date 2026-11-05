@@ -7,6 +7,8 @@
 # (`xcodebuild -downloadComponent MetalToolchain`, once per machine).
 #
 # Usage: scripts/setup.sh [--force]
+#        scripts/setup.sh --check   (builds nothing: the vendor trees are exactly the pins, Ghostty untouched and zmx
+#                                    the pinned commit plus scripts/patches/zmx; release.sh runs it before building)
 set -eu
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -17,10 +19,37 @@ GHOSTTY_TAG="v1.4.0"
 GHOSTTY_COMMIT="83fb95624b0439ee660c2679b43b38c8b63769cd"
 
 ZMX_URL="https://github.com/neurosnap/zmx.git"
-ZMX_COMMIT="d6dc347"   # version 0.8.1
+ZMX_COMMIT="d6dc347"   # version 0.8.1; setup checks it out and applies scripts/patches/zmx on top, uncommitted.
+# A checkout may hold those patches as a commit on that pin instead (same code): readiness checks the patches, not
+# the commit.
 
 FORCE=0
 [ "${1:-}" = "--force" ] && FORCE=1
+
+if [ "${1:-}" = "--check" ]; then
+  fail() { echo "setup: check: $*" >&2; exit 1; }
+  G="$VENDOR/ghostty"; Z="$VENDOR/zmx"
+  [ "$(git -C "$G" rev-parse HEAD 2>/dev/null)" = "$GHOSTTY_COMMIT" ] || fail "vendor/ghostty is not at $GHOSTTY_COMMIT ($GHOSTTY_TAG)"
+  [ -z "$(git -C "$G" status --porcelain)" ] || fail "vendor/ghostty has local changes:
+$(git -C "$G" status --porcelain | head -5)"
+  # zmx: every file git sees (tracked, or untracked and not ignored) equals the pinned commit with the patches applied
+  EXPECT="$(mktemp -d "${TMPDIR:-/tmp}/meum-zmx-check.XXXXXX")"
+  trap 'rm -rf "$EXPECT"' EXIT
+  git -C "$Z" archive "$ZMX_COMMIT" | tar -x -C "$EXPECT" || fail "vendor/zmx has no commit $ZMX_COMMIT"
+  for p in "$ROOT"/scripts/patches/zmx/*.patch; do
+    [ -e "$p" ] || continue
+    (cd "$EXPECT" && git apply "$p") || fail "zmx patch $(basename "$p") does not apply to $ZMX_COMMIT"
+  done
+  have="$(cd "$Z" && git ls-files -co --exclude-standard | sort)"
+  want="$(cd "$EXPECT" && find . -type f | sed 's|^\./||' | sort)"
+  [ "$have" = "$want" ] || fail "vendor/zmx files differ from $ZMX_COMMIT plus patches:
+$(printf '%s\n' "$have" > "$EXPECT.have"; printf '%s\n' "$want" | diff - "$EXPECT.have" | head -5; rm -f "$EXPECT.have")"
+  printf '%s\n' "$have" | while IFS= read -r f; do
+    cmp -s "$Z/$f" "$EXPECT/$f" || fail "vendor/zmx/$f differs from $ZMX_COMMIT plus patches"
+  done
+  echo "setup: check: vendor/ghostty is $GHOSTTY_TAG, vendor/zmx is $ZMX_COMMIT plus $(ls "$ROOT"/scripts/patches/zmx/*.patch 2>/dev/null | wc -l | tr -d ' ') patch(es)"
+  exit 0
+fi
 
 mkdir -p "$VENDOR"
 

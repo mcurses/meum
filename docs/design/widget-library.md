@@ -94,7 +94,11 @@ A widget is native code that runs inside meum with the user's full rights. Insta
 
 Tamago is a widget plus a Node daemon, installed today by its own `install.sh`, written for cmux.
 
-- **New manifest field:** `"helper": {"command": "bin/tamago-daemon", "args": [...]}`.
+- **New manifest field:** `"helper": {"command": "bin/tamago-daemon", "args": [...]}`. The command is a path inside
+  the widget folder; an absolute path or one with `..` is refused, at install and when meum scans the folder.
+- **It runs from a private copy:** meum copies the helper into `~/.local/state/meum/helpers/bin/` (0700), checks the
+  copy (pin or team signature) and starts the copy, also on every restart. Replacing the file in the widget folder
+  takes effect only after the next check (a reload), never in between.
 - **One helper per installed widget**, not per instance (a widget can have a sidebar card plus several tiles).
 - **Starting:**
   - meum starts the helper at launch if the widget is enabled, not when the first instance loads. Tamago's
@@ -102,7 +106,8 @@ Tamago is a widget plus a Node daemon, installed today by its own `install.sh`, 
   - `widget reload` doesn't restart it unless the helper's file changed.
   - It restarts the helper with backoff when it dies.
 - **Stopping:** on disable or remove, meum stops only the process group it started.
-- **Environment and log:** the helper gets `MEUM_SOCKET` and `MEUM_WIDGET_DATA` (the data folder from 2). It logs to
+- **Environment and log:** the helper gets `MEUM_SOCKET`, `MEUM_WIDGET_DATA` (the data folder from 2) and
+  `MEUM_WIDGET_DIR` (its widget folder, for files next to it). It logs to
   `~/.local/state/meum/helpers/<id>.log`.
 - This replaces Tamago's shell-hook start and its cmux socket workaround.
 - **Node:** either the helper bundles a Node runtime (about 40 MB) or Tamago's daemon gets ported to Swift. That is

@@ -35,6 +35,8 @@ struct WidgetsSection: View {
     }
     @State private var library: [LibraryRow] = []
     @State private var libraryState = "not loaded"
+    /// The last install, update or removal that failed, by widget id: shown on that widget's library row.
+    @State private var libraryErrors: [String: String] = [:]
     @State private var busy: String?
     @State private var trustOpen = false
     @State private var catalogDraft = ""
@@ -164,6 +166,7 @@ struct WidgetsSection: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text("\(r.name)  ").bold() + Text(r.version).foregroundStyle(.secondary)
                 if !r.description.isEmpty { Text(r.description).font(.caption).foregroundStyle(.secondary) }
+                if let e = libraryErrors[r.id] { Text(e).font(.caption).foregroundStyle(.red) }
             }
             Spacer()
             if busy == r.id {
@@ -213,7 +216,8 @@ struct WidgetsSection: View {
         guard let installer = widgets?.installer else { return }
         busy = r.id
         Task { @MainActor in
-            do { _ = try await installer.install(r.id, updateOnly: update); error = nil } catch { self.error = "\(error)" }
+            do { _ = try await installer.install(r.id, updateOnly: update); libraryErrors[r.id] = nil }
+            catch { libraryErrors[r.id] = "\(error)" }
             busy = nil
             refresh()
             loadLibrary()
@@ -221,7 +225,8 @@ struct WidgetsSection: View {
     }
 
     private func remove(_ r: LibraryRow) {
-        do { _ = try widgets?.installer?.remove(r.id, data: false); error = nil } catch { self.error = "\(error)" }
+        do { _ = try widgets?.installer?.remove(r.id, data: false); libraryErrors[r.id] = nil }
+        catch { libraryErrors[r.id] = "\(error)" }
         refresh()
         loadLibrary()
     }

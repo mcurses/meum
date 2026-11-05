@@ -10,6 +10,8 @@ import MeumCore
 ///   --autoquit SECONDS / MEUM_AUTOQUIT     quit after N seconds (test runs)
 ///   --frame x,y,w,h    / MEUM_FRAME        container frame in AppKit screen coords instead of the visible frame
 ///   --update-feed URL  / MEUM_UPDATE_FEED  release feed instead of GitHub's latest meum release (tests)
+///   --background       / MEUM_BACKGROUND=1 start behind other windows without taking focus (isolated test
+///                                         instances only, so a test does not interrupt whoever uses the Mac)
 ///   ZMX_DIR                               passed through to zmx (an isolated socket dir for tests)
 struct AppOptions {
     var stateDir: URL
@@ -26,6 +28,8 @@ struct AppOptions {
     var launchEnv: [String: String] = [:]
     /// Started with its own state dir (a test instance), not the user's.
     var isolated = false
+    /// `--background`: don't activate, put the window behind the others. Honoured only when `isolated`.
+    var background = false
 
     static func parse(arguments: [String] = CommandLine.arguments,
                       env: [String: String] = ProcessInfo.processInfo.environment) -> AppOptions {
@@ -52,6 +56,8 @@ struct AppOptions {
                           debugResume: env["MEUM_DEBUG_RESUME"] == "1",
                           updateFeed: value("--update-feed", "MEUM_UPDATE_FEED").flatMap(URL.init(string:)),
                           launchEnv: env.filter { $0.key.hasPrefix("MEUM_") },
-                          isolated: value("--state-dir", "MEUM_STATE_DIR") != nil)
+                          isolated: value("--state-dir", "MEUM_STATE_DIR") != nil,
+                          background: value("--state-dir", "MEUM_STATE_DIR") != nil
+                              && (arguments.contains("--background") || env["MEUM_BACKGROUND"] == "1"))
     }
 }

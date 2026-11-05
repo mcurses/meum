@@ -5,9 +5,14 @@ import MeumCore
 /// Runs widgets' background programs ("helpers", e.g. Tamago's daemon): one per installed, enabled widget whose
 /// manifest has `"helper": {"command": "bin/daemon", "args": [...], "keepAlive": true}`.
 ///
-/// - `command` is relative to the widget folder (or absolute). It starts when meum launches or the widget becomes
-///   enabled, not when the widget's first card or tab appears: a helper may follow things while nothing shows it.
-/// - Environment: meum's own, plus `MEUM_SOCKET`, `MEUM_WIDGET_ID` and `MEUM_WIDGET_DATA` (the widget's data folder).
+/// - `command` is a path inside the widget folder (an absolute path or one with `..` is refused, as the installer
+///   does). It starts when meum launches or the widget becomes enabled, not when the widget's first card or tab
+///   appears: a helper may follow things while nothing shows it.
+/// - It runs from a private copy (`WidgetInstaller.trustedHelper`): the copy is what was checked, so swapping the
+///   file in the widget folder afterwards changes nothing until the next check. A helper that needs files next to
+///   it finds its folder in `MEUM_WIDGET_DIR`.
+/// - Environment: meum's own, plus `MEUM_SOCKET`, `MEUM_WIDGET_ID`, `MEUM_WIDGET_DIR` (the widget folder) and
+///   `MEUM_WIDGET_DATA` (the widget's data folder).
 /// - stdout and stderr go to `<state dir>/helpers/<id>.log`.
 /// - Each helper runs in its own process group. Stopping it signals only that group: SIGTERM, then SIGKILL after 3 s.
 ///   When a helper exits by itself, what is left in its group gets the same treatment before any restart.
@@ -20,7 +25,10 @@ import MeumCore
 final class WidgetHelpers {
     struct Spec: Equatable {
         var widgetID: String
+        /// The file in the widget folder; `trustedHelper` replaces it with the checked private copy.
         var executable: String
+        /// The widget folder (`MEUM_WIDGET_DIR`).
+        var folder: String
         var args: [String]
         var keepAlive: Bool
         /// Size and modification time of the executable, so a rebuilt helper restarts on reload.
@@ -53,11 +61,20 @@ final class WidgetHelpers {
     /// The helper spec of a widget folder's manifest, nil without a `helper` field (or with a bad one).
     static func spec(widgetID: String, folder: URL, manifest: [String: Any]) -> Spec? {
         guard let h = manifest["helper"] as? [String: Any], let cmd = h["command"] as? String, !cmd.isEmpty else { return nil }
-        let exe = cmd.hasPrefix("/") ? cmd : folder.appendingPathComponent(cmd).path
+        guard isInsideFolder(cmd) else {
+            Log.error("widget \(widgetID): helper \(cmd) is outside the widget folder; not started")
+            return nil
+        }
+        let exe = folder.appendingPathComponent(cmd).path
         let attrs = try? FileManager.default.attributesOfItem(atPath: exe)
         let stamp = "\((attrs?[.size] as? NSNumber)?.int64Value ?? -1)-\((attrs?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0)"
-        return Spec(widgetID: widgetID, executable: exe, args: (h["args"] as? [String]) ?? [],
+        return Spec(widgetID: widgetID, executable: exe, folder: folder.path, args: (h["args"] as? [String]) ?? [],
                     keepAlive: (h["keepAlive"] as? Bool) ?? true, fileStamp: stamp)
+    }
+
+    /// A helper command that stays inside the widget folder: relative, without `..`.
+    static func isInsideFolder(_ command: String) -> Bool {
+        !command.hasPrefix("/") && !command.split(separator: "/").contains("..")
     }
 
     /// Brings the running helpers in line with `wanted` (the enabled widgets' specs).
@@ -89,6 +106,7 @@ final class WidgetHelpers {
         var env = ProcessInfo.processInfo.environment
         env["MEUM_SOCKET"] = socketPath
         env["MEUM_WIDGET_ID"] = spec.widgetID
+        env["MEUM_WIDGET_DIR"] = spec.folder
         env["MEUM_WIDGET_DATA"] = data.path
         appendLog(log, "meum: starting \(spec.executable) \(spec.args.joined(separator: " "))")
 

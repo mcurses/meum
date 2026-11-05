@@ -361,7 +361,7 @@ final class AppAPI {
             guard let key = nonEmpty(p["key"]?.stringValue) else { throw ControlError.invalidParams("needs 'key'") }
             guard let value = p["value"] else { throw ControlError.invalidParams("needs 'value'") }
             if SettingsJSON.socketReadOnly.contains(key) {
-                throw ControlError(code: "forbidden", message: SettingsJSON.trustRefusal("'\(key)'"))
+                throw ControlError(code: "forbidden", message: SettingsJSON.socketRefusal(key))
             }
             return ["key": .string(key), "value": try settings.set(key, value)]
 
