@@ -1,5 +1,7 @@
 # Floating layout spike: a floating sidebar and tiled floating terminals
 
+> The spike's code was removed from the tree on 2026-11-05; this result is what remains. The paths below are where it lived.
+
 2026-11-02, MacBook Pro 16" (one display, 1728×1117 pt, macOS 26 / Darwin 25.6), Swift 6.4.2.
 
 ## Verdict: native and robust, with one product caveat

@@ -1,5 +1,7 @@
 # Tamago's sidebar inside the meum floating layout
 
+> The spike's code was removed from the tree on 2026-11-05; this result is what remains. The paths below are where it lived.
+
 2026-11-02, MacBook Pro 16", macOS 26, Swift 6.4.2. Tamago HEAD `0c53cad` (the copied files had no
 uncommitted changes; see `vendor/PROVENANCE.txt`).
 

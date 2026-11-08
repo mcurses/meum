@@ -1,6 +1,6 @@
 import AppKit
 
-/// Approach A from spikes/floating-layout: one clear window holding every card, screen-sized by default.
+/// Approach A from the floating-layout spike (docs/research/spike-floating-layout.md): one clear window holding every card, screen-sized by default.
 /// Clicks on fully transparent pixels (the gaps) fall through to whatever is behind, by the window server's
 /// own alpha hit test.
 ///

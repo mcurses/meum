@@ -164,6 +164,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
+    /// meum:// links from other apps. `meum://focus?claude=<session id>`: the tab running that Claude Code session,
+    /// its workspace shown and meum in front (as `meum tab focus --claude-id`). Anything else is logged and ignored.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls { openLink(url) }
+    }
+
+    func openLink(_ url: URL) {
+        guard let controller else { return }
+        let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        guard url.scheme == "meum", url.host == "focus", let ref = query.first(where: { $0.name == "claude" })?.value,
+              !ref.isEmpty else {
+            // no focus change: a link from anywhere must not pull the user's keystrokes into meum
+            Log.error("link \(url.absoluteString): not one meum knows (meum://focus?claude=<session id>)")
+            return
+        }
+        // the same lookup as tab.select {claude}: a whole id or a unique prefix
+        // meum comes to the front only when the link named a tab it showed
+        switch controller.store.state.tab(claudeSession: ref) {
+        case .found(let tab): if controller.selectTab(tab) { controller.bringToFront() }
+        case .none: Log.error("link \(url.absoluteString): no tab runs that Claude session")
+        case .ambiguous(let n): Log.error("link \(url.absoluteString): '\(ref)' matches \(n) Claude sessions; use more of the id")
+        }
+    }
+
     /// Clicking the Dock icon brings the workspace forward.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         controller?.window.makeKeyAndOrderFront(nil)

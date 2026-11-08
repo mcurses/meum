@@ -77,6 +77,24 @@ final class WidgetHelpers {
         !command.hasPrefix("/") && !command.split(separator: "/").contains("..")
     }
 
+    /// The file a path inside a widget folder really is, with every symlink resolved, if that file is a regular
+    /// file still inside the (resolved) folder; nil when a link leads out of it or to nothing. A copy made from the
+    /// returned URL is the file itself, never a link to something else.
+    /// Whether a copy just made is a regular file itself (lstat: a link is not), so it can't have been swapped for a
+    /// link between `realFile`'s check and the copy.
+    static func isPlainFile(_ url: URL) -> Bool {
+        var st = stat()
+        return lstat(url.path, &st) == 0 && (st.st_mode & S_IFMT) == S_IFREG
+    }
+
+    static func realFile(_ url: URL, inside folder: URL) -> URL? {
+        let real = url.resolvingSymlinksInPath()
+        let base = folder.resolvingSymlinksInPath().path
+        guard real.path.hasPrefix(base.hasSuffix("/") ? base : base + "/"),
+              (try? real.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true else { return nil }
+        return real
+    }
+
     /// Brings the running helpers in line with `wanted` (the enabled widgets' specs).
     func sync(_ wanted: [Spec]) {
         let byID = Dictionary(wanted.map { ($0.widgetID, $0) }, uniquingKeysWith: { a, _ in a })

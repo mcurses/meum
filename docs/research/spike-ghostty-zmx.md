@@ -1,5 +1,7 @@
 # Spike: libghostty surface + `zmx attach`, survives an app kill
 
+> The spike's code was removed from the tree on 2026-11-05; this result is what remains. The paths below are where it lived.
+
 Date: 2026-11-02. Machine: macOS 26.6, Xcode 27.2 (Swift 6.4), Apple Silicon.
 Question (from `docs/research/2026-11-02-cmux-fork-or-replace.md`, section 3D): can a minimal native macOS app
 host a GhosttyKit terminal surface whose command is `zmx attach <name>`, so that after the app is killed and

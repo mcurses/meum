@@ -8,7 +8,7 @@ set -eu
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DEST="${MEUM_INSTALL_PATH:-/Applications/meum.app}"
 [ -z "$(git -C "$ROOT" status --porcelain)" ] || { echo "install: the working tree is not clean" >&2; exit 1; }
-"$ROOT/scripts/build-app.sh"
+MEUM_URL_SCHEME=1 "$ROOT/scripts/build-app.sh"
 NEW="$(dirname "$DEST")/.$(basename "$DEST").new"
 OLD="$(dirname "$DEST")/.$(basename "$DEST").previous"   # hidden, so Spotlight and Launchpad don't list it
 rm -rf "$NEW" "$OLD"

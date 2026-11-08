@@ -1,6 +1,6 @@
 {
   "name": "meum",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "description": "meum's MCP tools for sessions running in a meum tab: open widgets such as the browser next to the terminal, message and screenshot them, set status entries, notify, put labels on your own tab, and set your workspace's name, icon, colour and labels. Outside meum the server offers no tools. No secrets: it talks to meum's local socket.",
   "author": {
     "name": "Max Studanski"

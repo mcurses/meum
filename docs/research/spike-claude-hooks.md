@@ -1,5 +1,7 @@
 # Spike: plain Claude Code hooks -> meum unix socket (2026-11-02)
 
+> The spike's code was removed from the tree on 2026-11-05; this result is what remains. The paths below are where it lived.
+
 Verdict: **works, go.** Plain hooks reach the socket for every config dir tested, survive resume/continue,
 carry everything needed, and the hook is safe when the app is down. Tested with the real binary
 `/opt/homebrew/bin/claude` (CMUX_* vars stripped, cmux wrapper bypassed), `-p --model haiku`, hooks passed with

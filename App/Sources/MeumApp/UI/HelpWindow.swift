@@ -60,6 +60,7 @@ struct HelpView: View {
                     bullet("A workspace is one project: its cards sit side by side, and each card holds tabs (terminals, or widgets such as a browser).")
                     bullet("New tabs, splits and widgets are in the Terminal menu; every shortcut is next to its menu item and can be changed in Settings ▸ Shortcuts.")
                     bullet("Drag a tab onto another card to move it, or onto a card's edge to split it. Double-click the gap between two cards to make them the same size.")
+                    bullet("Workspace ▸ Go to Workspace… (⌘P) finds a workspace or a tab as you type: part of its name, folder, group, labels or Claude session name. Return goes there; with nothing typed, Return goes back to the workspace you were in before.")
                     bullet("In the sidebar, ⌘-click and ⇧-click select several workspaces; right-click for groups, colour and pin. Workspace ▸ New Workspace (or +) adds one.")
                     bullet("Your terminals keep running when meum quits, and come back when it starts again.")
                     bullet("⌘, opens Settings.")
@@ -77,12 +78,12 @@ struct HelpView: View {
                         Text("A ring on a tab: Claude runs there, but meum hears nothing from it (no hooks in that profile, or it started before they were installed)")
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                    bullet("In the sidebar each Claude session in a workspace is one dot: orange, blue or grey. A folded group shows its most urgent one.")
+                    bullet("In the sidebar each Claude session in a workspace is one dot, coloured as on its tab: orange, blue, green or grey. A folded group shows its most urgent one. Workspace ▸ Go to Next Waiting Session (⌘J) shows the next tab where Claude waits for you, then the next finished one you haven't read.")
                     bullet("Chips on a tab are labels the Claude session in it set on itself; chips on a sidebar row are the workspace's own labels. meum doesn't check who set them.")
                 }
                 .id(HelpWindowController.Topic.dots.rawValue)
 
-                Section("Command line tool and Claude Code") {
+                Section("Command line tool, Claude Code and control socket") {
                     bullet("In every meum tab the `meum` command is on the PATH: type `meum help` for everything it can do.")
                     LabeledContent("Elsewhere") {
                         HStack {
@@ -97,6 +98,7 @@ struct HelpView: View {
                     }
                     bullet("Any program running as you can use meum through its control socket: open tabs, type or paste into terminals, set labels and status. The socket is only open to your user:")
                     Text(socket).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
+                    bullet("Another app can bring a Claude session's tab to the front with the link meum://focus?claude=ID, or with `meum tab focus --claude-id ID`. `meum tree` shows each session's id.")
                     if let copied { Text("Copied the \(copied) to the clipboard.").font(.caption).foregroundStyle(.secondary) }
                 }
                 .id(HelpWindowController.Topic.cli.rawValue)

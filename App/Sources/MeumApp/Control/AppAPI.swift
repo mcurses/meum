@@ -251,8 +251,18 @@ final class AppAPI {
             return try newTab(p)
 
         case MeumMethod.tabSelect:
-            let (_, tab) = try self.tab(p)
-            controller.selectTab(tab.id)
+            let id: UUID
+            if let ref = nonEmpty(p["claude"]?.stringValue) {
+                switch state.tab(claudeSession: ref) {
+                case .found(let t): id = t
+                case .none: throw ControlError.notFound("no tab runs Claude session '\(ref)'")
+                case .ambiguous(let n): throw ControlError.invalidParams("'\(ref)' matches \(n) Claude sessions; use more of the id")
+                }
+            } else {
+                id = try self.tab(p).1.id
+            }
+            controller.selectTab(id)
+            if p["activate"]?.boolValue == true { controller.bringToFront() }
             return .null
 
         case MeumMethod.tabClose:
@@ -293,6 +303,9 @@ final class AppAPI {
             }
             guard tab.agent != nil else {
                 throw ControlError.unavailable("tab \(tab.id.uuidString) has no Claude Code session (labels belong to one; are meum's hooks installed?)")
+            }
+            if labels.isEmpty, let old = tab.agent?.labels, let sid = tab.agent?.sessionID {
+                AppControl.logChipDrop(tab.id, sid, old, "tab.setLabels with none (a program in a tab asked)")
             }
             store.mutate(.cosmetic) { $0.updateTab(tab.id) { $0.agent?.labels = labels.isEmpty ? nil : labels } }
             control.bus.publish("tab.labels", ["tab": .string(tab.id.uuidString), "labels": .array(labels.map { .string($0) })])

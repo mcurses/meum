@@ -25,6 +25,8 @@ struct CardAppearance: Equatable {
 /// the pinned wallpaper the materials blur and refract that still picture (vibrancy within the window); without it
 /// they show what is behind meum.
 final class GlassView: NSView {
+    /// Not a title bar: a drag here is meum's own (a tab, a card, a selection), never a window move (see CardHostView).
+    override var mouseDownCanMoveWindow: Bool { false }
     private let wallLayer = CALayer()
     private let effect = NSVisualEffectView()
     /// The macOS 26 Liquid Glass view, made on first use.
@@ -171,6 +173,8 @@ final class GlassView: NSView {
 }
 
 class FlippedView: NSView {
+    /// Not a title bar: a drag here is meum's own (a tab, a card, a selection), never a window move (see CardHostView).
+    override var mouseDownCanMoveWindow: Bool { false }
     override var isFlipped: Bool { true }
 }
 
@@ -193,9 +197,10 @@ class CardHostView: NSView {
 
     required init?(coder: NSCoder) { fatalError() }
 
-    /// The window is titled, so AppKit moves it on a drag anywhere in the title bar strip that isn't covered by a
-    /// view saying no here. Cards say no for themselves and everything in them (tabs, terminals, widgets): a drag
-    /// there is the card's own. Only the top gap and the sidebar's header move the window.
+    /// The window is titled, so AppKit moves it on a drag in the title bar strip when the view under the mouse says
+    /// yes here (the default for a view that isn't opaque). The card, its glass, its content, the tab strip, the grab
+    /// handle and the terminal all say no: a drag there is the card's own. Only the top gap and the sidebar's header
+    /// move the window (they call `titleBarMouseDown` themselves).
     override var mouseDownCanMoveWindow: Bool { false }
 
     var content: NSView { glass.content }
@@ -293,7 +298,7 @@ final class StartHintView: NSView {
         ("⌘-click or ⇧-click selects several workspaces.",
          "Then right-click to put them in a group. A group folds away with a click on its name."),
         ("The dots tell you what Claude is up to.",
-         "Orange waits for you, blue is done and unread, grey is idle. Hover a dot if you forget."),
+         "Orange waits for you, blue is done and unread, green is working, grey is idle. ⌘J jumps to the next session waiting for you."),
         ("Make it yours with ⌘,",
          "Fonts, colour themes, glass, the sidebar, widgets and every shortcut."),
         ("There's more in the Help menu.",

@@ -157,6 +157,17 @@ final class CLITests: XCTestCase {
         XCTAssertEqual(lastCall?.params["text"], "-dash")
     }
 
+    func testTabFocusByClaudeID() throws {
+        XCTAssertEqual(meum(["tab", "focus", "--claude-id", "5e55105e"]).code, 0)
+        XCTAssertEqual(lastCall?.method, "tab.select")
+        XCTAssertEqual(lastCall?.params, ["claude": "5e55105e", "activate": true])
+        XCTAssertEqual(meum(["tab", "focus"]).code, 2, "--claude-id is required")
+        XCTAssertEqual(meum(["tab", "focus", "--claude-id", ""]).code, 2)
+        let help = meum(["tab", "focus", "--help"], socket: false)
+        XCTAssertEqual(help.code, 0)
+        XCTAssertTrue(help.out.contains("meum://focus?claude=ID"), help.out)
+    }
+
     func testStatusAndNotify() throws {
         XCTAssertEqual(meum(["status", "set", "build", "passing", "--workspace", "api", "--color", "#00ff00"]).code, 0)
         XCTAssertEqual(lastCall?.method, "status.set")
@@ -181,6 +192,33 @@ final class CLITests: XCTestCase {
         XCTAssertEqual(lastCall?.params, ["tab": .string(FakeHandler.tab1), "text": "line one\nline two"])
         _ = meum(["tab", "focused"])
         XCTAssertEqual(lastCall?.method, "tab.focused")
+    }
+
+    func testWidgetListMarksAndLegend() throws {
+        func widget(_ id: String, _ extra: [String: JSON]) -> JSON {
+            var w: [String: JSON] = ["id": .string(id), "displayName": .string(id), "scope": "tile", "folder": .string("/w/\(id)")]
+            for (k, v) in extra { w[k] = v }
+            return .object(w)
+        }
+        h.handler.widgetList = ["directory": "/w", "apiVersion": "1", "widgets": [
+            widget("shown", ["loaded": true, "shown": true, "position": 0]),
+            widget("hidden", ["loaded": true, "shown": false, "position": 1]),
+            widget("tab", ["position": 2]),
+            widget("broken", ["error": "syntax error", "position": 3]),
+            widget("stranger", ["trust": "unverified", "position": 4]),
+            widget("off", ["disabled": true, "position": 5]),
+        ]]
+        let r = meum(["widget", "list"])
+        XCTAssertEqual(r.code, 0, r.err)
+        let lines = r.out.components(separatedBy: "\n")
+        let marks = lines.dropFirst().dropLast().map { String($0.prefix(2)) }
+        XCTAssertEqual(marks, ["* ", "~ ", "+ ", "! ", "! ", "- "], r.out)
+        XCTAssertEqual(lines.last, "(* shown  ~ loaded, hidden  + opens as a tab  - switched off  ! failed to load)")
+
+        h.handler.widgetList = ["directory": "/w", "apiVersion": "1", "widgets": []]
+        let empty = meum(["widget", "list"])
+        XCTAssertEqual(empty.out.components(separatedBy: "\n").last, "  (none)", empty.out)
+        XCTAssertFalse(empty.out.contains("failed to load"), empty.out)
     }
 
     func testCallPassesRawParams() throws {
@@ -284,6 +322,7 @@ final class CLITests: XCTestCase {
         r = meum(["hooks", "install", "--help"], socket: false)
         XCTAssertTrue(r.out.contains("hooks status|install|uninstall"), r.out)
         XCTAssertTrue(meum(["help"], socket: false).out.contains("claude mcp add --scope user meum"))
+        XCTAssertTrue(meum(["help"], socket: false).out.contains("(uninstall: see Help ▸ Uninstall… in the app)"))
     }
 
     /// Without --script, install copies the meum-hook shipped next to the running meum (a fresh Mac has none).

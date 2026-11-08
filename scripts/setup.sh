@@ -8,7 +8,10 @@
 #
 # Usage: scripts/setup.sh [--force]
 #        scripts/setup.sh --check   (builds nothing: the vendor trees are exactly the pins, Ghostty untouched and zmx
-#                                    the pinned commit plus scripts/patches/zmx; release.sh runs it before building)
+#                                    the pinned commit plus scripts/patches/zmx, and Ghostty's build outputs are the
+#                                    ones setup's own build recorded in vendor/ghostty.built)
+#        scripts/setup.sh --release (what release.sh runs: --check of the sources, zmx rebuilt from them, Ghostty
+#                                    rebuilt unless its outputs match vendor/ghostty.built, then --check again)
 set -eu
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -26,7 +29,16 @@ ZMX_COMMIT="d6dc347"   # version 0.8.1; setup checks it out and applies scripts/
 FORCE=0
 [ "${1:-}" = "--force" ] && FORCE=1
 
-if [ "${1:-}" = "--check" ]; then
+# The hash of Ghostty's build outputs build-app.sh ships (the static library and its headers, the shell integration,
+# themes and terminfo). setup.sh writes it to vendor/ghostty.built after building them from the pinned commit;
+# --check compares, so outputs from another tree, or edited after the build, are noticed.
+ghostty_outputs_hash() {
+  (cd "$VENDOR/ghostty" && find macos/GhosttyKit.xcframework zig-out/share/ghostty zig-out/share/terminfo -type f 2>/dev/null |
+    LC_ALL=C sort | while IFS= read -r f; do shasum -a 256 "$f"; done) | shasum -a 256 | cut -d' ' -f1
+}
+MARKER="$VENDOR/ghostty.built"
+
+check_sources() {
   fail() { echo "setup: check: $*" >&2; exit 1; }
   G="$VENDOR/ghostty"; Z="$VENDOR/zmx"
   [ "$(git -C "$G" rev-parse HEAD 2>/dev/null)" = "$GHOSTTY_COMMIT" ] || fail "vendor/ghostty is not at $GHOSTTY_COMMIT ($GHOSTTY_TAG)"
@@ -48,8 +60,24 @@ $(printf '%s\n' "$have" > "$EXPECT.have"; printf '%s\n' "$want" | diff - "$EXPEC
     cmp -s "$Z/$f" "$EXPECT/$f" || fail "vendor/zmx/$f differs from $ZMX_COMMIT plus patches"
   done
   echo "setup: check: vendor/ghostty is $GHOSTTY_TAG, vendor/zmx is $ZMX_COMMIT plus $(ls "$ROOT"/scripts/patches/zmx/*.patch 2>/dev/null | wc -l | tr -d ' ') patch(es)"
-  exit 0
-fi
+}
+
+check_outputs() {
+  [ -f "$MARKER" ] || { echo "setup: check: no record of Ghostty's build ($MARKER); scripts/setup.sh --release rebuilds it" >&2; return 1; }
+  [ "$(cat "$MARKER")" = "$GHOSTTY_COMMIT $(ghostty_outputs_hash)" ] ||
+    { echo "setup: check: Ghostty's build outputs are not the ones setup built from $GHOSTTY_COMMIT; scripts/setup.sh --release rebuilds them" >&2; return 1; }
+  echo "setup: check: Ghostty's build outputs match setup's own build"
+}
+
+case "${1:-}" in
+  --check) check_sources; check_outputs; exit $? ;;
+  --release)
+    check_sources
+    command -v zig >/dev/null 2>&1 || { echo "setup: missing tool: zig" >&2; exit 1; }
+    (cd "$VENDOR/zmx" && zig build -Doptimize=ReleaseSafe) || { echo "setup: zmx build failed" >&2; exit 1; }
+    echo "setup: zmx rebuilt from the checked sources"
+    if ! check_outputs 2>/dev/null; then echo "setup: rebuilding Ghostty"; FORCE=1; ONLY_GHOSTTY=1; else exit 0; fi ;;
+esac
 
 mkdir -p "$VENDOR"
 
@@ -83,7 +111,9 @@ else
   (cd "$VENDOR/ghostty" && zig build -Demit-macos-app=false -Demit-xcframework=true \
       -Dxcframework-target=native -Doptimize=ReleaseFast)
   ghostty_ready || { echo "setup: ghostty build did not produce the expected outputs" >&2; exit 1; }
+  echo "$GHOSTTY_COMMIT $(ghostty_outputs_hash)" > "$MARKER"
 fi
+if [ "${ONLY_GHOSTTY:-0}" = 1 ]; then check_sources; check_outputs; exit $?; fi
 
 # meum carries a few zmx fixes as patches until they are merged upstream (scripts/patches/zmx/*.patch, each one a
 # pull request candidate for neurosnap/zmx). zmx counts as ready only when its binary exists and every patch is in.

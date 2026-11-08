@@ -42,8 +42,10 @@ final class MainMenu: NSObject {
 
         let ws = NSMenu(title: "Workspace")
         item(ws, "New Workspace", "newWorkspace", #selector(newWorkspace))
+        item(ws, "Go to Workspace…", "goToWorkspace", #selector(goToWorkspace))
         item(ws, "Previous Workspace", "previousWorkspace", #selector(prevWorkspace))
         item(ws, "Next Workspace", "nextWorkspace", #selector(nextWorkspace))
+        item(ws, "Go to Next Waiting Session", "nextWaiting", #selector(nextWaiting))
         ws.addItem(.separator())
         for i in 1...9 {
             let mi = item(ws, "Workspace \(i)", "workspace\(i)", #selector(selectWorkspace(_:)))
@@ -90,7 +92,7 @@ final class MainMenu: NSObject {
         let help = NSMenu(title: "Help")
         for (title, topic) in [("Getting Started", HelpWindowController.Topic.start),
                                ("What the Dots and Labels Mean", .dots),
-                               ("Command Line Tool and Claude Code", .cli)] {
+                               ("Command Line Tool, Claude Code and Control Socket", .cli)] {
             let mi = help.addItem(withTitle: title, action: #selector(openHelp(_:)), keyEquivalent: "")
             mi.target = self
             mi.representedObject = topic.rawValue
@@ -196,6 +198,8 @@ final class MainMenu: NSObject {
     @objc func toggleSidebar() { controller.setSidebarCollapsed(!controller.settings.sidebarCollapsed) }
     @objc func prevWorkspace() { controller.selectAdjacentWorkspace(-1) }
     @objc func nextWorkspace() { controller.selectAdjacentWorkspace(1) }
+    @objc func goToWorkspace() { controller.switcher.toggle() }
+    @objc func nextWaiting() { if !controller.selectNextWaitingSession() { NSSound.beep() } }
     @objc func selectWorkspace(_ s: NSMenuItem) { controller.selectWorkspace(at: s.tag) }
     @objc func renameWorkspace() { controller.renameSelectedWorkspace() }
     @objc func closeWorkspace() { controller.closeSelectedWorkspace() }
@@ -229,9 +233,6 @@ extension MainMenu: NSMenuDelegate {
         let entries = controller.widgets?.scan() ?? []
         if entries.isEmpty {
             menu.addItem(withTitle: "No widgets installed", action: nil, keyEquivalent: "").isEnabled = false
-            let get = menu.addItem(withTitle: "Get Widgets…", action: #selector(openSettingsSection(_:)), keyEquivalent: "")
-            get.target = self
-            get.representedObject = "widgets"
         }
         for e in entries {
             let mi = NSMenuItem(title: e.displayName, action: #selector(addWidget(_:)), keyEquivalent: "")
@@ -239,5 +240,10 @@ extension MainMenu: NSMenuDelegate {
             mi.representedObject = e.id
             menu.addItem(mi)
         }
+        // always a way to the library, also when some widget is installed already
+        menu.addItem(.separator())
+        let get = menu.addItem(withTitle: "Get Widgets…", action: #selector(openSettingsSection(_:)), keyEquivalent: "")
+        get.target = self
+        get.representedObject = "widgets"
     }
 }

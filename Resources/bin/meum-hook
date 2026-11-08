@@ -4,7 +4,11 @@
 #   {"id":1,"method":"agent.hook","oneshot":true,
 #    "params":{"tab":$MEUM_TAB,"configDir":$CLAUDE_CONFIG_DIR,"payload":<stdin>}}
 #
-# Contract: silent (stdout would be injected into Claude's context for some events), always exit 0,
+# On SessionStart, once meum has taken the event, it also prints two lines Claude Code adds to the session's context: that it runs inside meum and
+# what it can do there (its own tab's labels; the workspace's shared name, icon, colour and labels). Facts only: rules
+# about who should change what belong to whatever configures the session, not to meum.
+#
+# Contract: silent otherwise (stdout would be injected into Claude's context for some events), always exit 0,
 # and never block Claude: no tab, no socket or a dead socket cost a few ms; a stuck server is cut off
 # after one second by nc -w 1. The server closes the connection after answering ("oneshot").
 
@@ -29,5 +33,11 @@ case "$CFG" in
 esac
 
 printf '{"id":1,"method":"agent.hook","oneshot":true,"params":{"tab":"%s","configDir":%s,"payload":%s}}\n' \
-  "$MEUM_TAB" "$CFGJ" "$IN" | "$NC" -U -w 1 "$SOCK" >/dev/null 2>&1
+  "$MEUM_TAB" "$CFGJ" "$IN" | "$NC" -U -w 1 "$SOCK" >/dev/null 2>&1 || exit 0
+# meum answered: a starting session learns where it runs (only then, so a dead socket stays silent)
+case "$IN" in
+  *'"hook_event_name":"SessionStart"'* | *'"hook_event_name": "SessionStart"'*)
+    echo "You are running in a tab of meum, a terminal workspace app (tab $MEUM_TAB, workspace ${MEUM_WORKSPACE:-?}); \`meum help\` lists what you can do from here."
+    echo "You may put up to four short labels on your own tab saying what you are doing (\`meum tab labels <label>...\`, \`none\` clears them). The workspace's name, icon, colour and labels are shared by every tab in it (\`meum workspace rename|icon|color|labels\`)." ;;
+esac
 exit 0

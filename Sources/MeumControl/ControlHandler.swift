@@ -64,7 +64,9 @@ public enum MeumMethod {
     public static let workspaceMarkUnread = "workspace.markUnread"
     /// `{workspace?, card?, cwd?, command?, split?: "right"|"down", widget?, config?}` -> `{id, workspace, card}`: a terminal tab, in `card` (default the focused card) or in a new card split off it.
     public static let tabNew = "tab.new"
-    /// `{tab}`: shows the tab (and its workspace).
+    /// `{tab | claude, activate?}`: shows the tab (and its workspace). `claude` names the tab by the Claude Code session
+    /// running in it (its session id, or a unique prefix of 8 or more characters); `activate: true` also brings meum to
+    /// the front, for a click in another app.
     public static let tabSelect = "tab.select"
     /// `{tab}`: closes the tab and ends its terminal.
     public static let tabClose = "tab.close"

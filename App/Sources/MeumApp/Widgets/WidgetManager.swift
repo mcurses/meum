@@ -297,7 +297,15 @@ final class WidgetManager {
         try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: tmp.path)
         let copy = tmp.appendingPathComponent("\(getpid())-\(loadCount)-\(entry.library.lastPathComponent)")
         try? FileManager.default.removeItem(at: copy)
-        try FileManager.default.copyItem(at: entry.library, to: copy)
+        // the real file, never a link (a copied link would load whatever it points at after the check)
+        guard let source = WidgetHelpers.realFile(entry.library, inside: entry.folder) else {
+            throw LoadError(description: "library \(entry.library.lastPathComponent) is not a file inside the widget folder")
+        }
+        try FileManager.default.copyItem(at: source, to: copy)
+        guard WidgetHelpers.isPlainFile(copy) else {
+            try? FileManager.default.removeItem(at: copy)
+            throw LoadError(description: "library \(entry.library.lastPathComponent) changed into a link while meum copied it")
+        }
         // the trust check runs on the copy, right before dlopen: the installed file may change, the copy doesn't
         if let installer {
             let trust = installer.trust(of: copy, id: entry.id)

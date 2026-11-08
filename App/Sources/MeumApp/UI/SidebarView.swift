@@ -418,6 +418,7 @@ final class SidebarView: FlippedView, NSTextFieldDelegate {
             var sum = WorkspaceAgentSummary()
             for m in members {
                 sum.liveSessions += m.agents.liveSessions; sum.needsInput += m.agents.needsInput; sum.unread += m.agents.unread
+                sum.running += m.agents.running
             }
             for c in Self.agentDots(sum) { right = drawDot(c, right: right, midY: r.midY, size: 6) }
         }
@@ -684,13 +685,15 @@ final class SidebarView: FlippedView, NSTextFieldDelegate {
         return parts.count > 3 ? "…/" + parts.suffix(2).joined(separator: "/") : p
     }
 
-    /// The row's agent dots, right to left: one per live session, coloured by its state, at most 5.
+    /// The row's agent dots, right to left: one per live session, coloured as on its tab (orange waiting, blue finished
+    /// unread, green working, grey idle), the most urgent first, at most 5.
     static func agentDots(_ a: WorkspaceAgentSummary) -> [NSColor] {
         let waiting = min(a.needsInput, a.liveSessions)
         let unread = min(a.unread, a.liveSessions - waiting)
-        let rest = a.liveSessions - waiting - unread
+        let working = min(a.running, a.liveSessions - waiting - unread)
+        let rest = a.liveSessions - waiting - unread - working
         let all = Array(repeating: NSColor.systemOrange, count: waiting) + Array(repeating: NSColor.systemBlue, count: unread)
-            + Array(repeating: NSColor(white: 1, alpha: 0.45), count: rest)
+            + Array(repeating: NSColor.systemGreen, count: working) + Array(repeating: NSColor(white: 1, alpha: 0.45), count: rest)
         return Array(all.prefix(5))
     }
 

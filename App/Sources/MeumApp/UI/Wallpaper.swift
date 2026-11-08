@@ -1,5 +1,5 @@
 // Wallpaper glass: the desktop picture, blurred and anchored to screen coordinates, under every card.
-// A minimal port of ~/code/wallpaper-glass via spikes/floating-layout (defaults: blur 4 pt, tint 0.35).
+// A minimal port of ~/code/wallpaper-glass via the floating-layout spike (docs/research/spike-floating-layout.md) (defaults: blur 4 pt, tint 0.35).
 
 import AppKit
 import CoreImage

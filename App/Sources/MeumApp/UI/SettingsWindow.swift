@@ -110,14 +110,13 @@ struct SettingsView: View {
                 Toggle("Pin on pinned workspaces", isOn: plainBool("sidebarShowPin") { $0.sidebarShowPin })
                 Text("Status entries come from `meum status set`, metadata from `meum workspace meta`, the label chips from `meum workspace labels`. Folder and branch follow the focused tab. A port opens localhost in the browser.")
                     .font(.caption).foregroundStyle(.secondary)
-                if !s.statusLinkSchemes.isEmpty {
+                ForEach(s.statusLinkSchemes, id: \.self) { scheme in
                     HStack {
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text("Status links that open without asking")
-                            Text(s.statusLinkSchemes.map { "\($0):" }.joined(separator: ", ")).font(.caption).foregroundStyle(.secondary)
-                        }
+                        Text("“\(scheme):” status links open without asking")
                         Spacer()
-                        Button("Forget") { set("statusLinkSchemes", .array([])) }
+                        Button("Forget") {
+                            set("statusLinkSchemes", .array(s.statusLinkSchemes.filter { $0 != scheme }.map { .string($0) }))
+                        }
                     }
                 }
             }
@@ -198,6 +197,8 @@ struct SettingsView: View {
                 Text("Off: a click between cards reaches the app behind meum. The gaps you drag to resize always catch the mouse.")
                     .font(.caption).foregroundStyle(.secondary)
                 Toggle("Reattach running sessions on launch", isOn: plainBool("reattachSessions") { $0.reattachSessions })
+                Text("Off: the next time meum starts, it ends every terminal that kept running and opens fresh shells.")
+                    .font(.caption).foregroundStyle(.secondary)
                 Toggle("Resume Claude sessions after a reboot", isOn: plainBool("resumeClaude") { $0.resumeClaude })
             }
             Section {
@@ -216,7 +217,7 @@ struct SettingsView: View {
                     Spacer()
                     Button("Check Now") { checkForUpdates?() }
                 }
-                Text("New versions come from github.com/mcurses/meum. Installing restarts meum; your terminals keep running.")
+                Text("New versions come from github.com/mcurses/meum. Installing restarts meum; your terminals keep running. Claude sessions keep their meum tools until they restart.")
                     .font(.caption).foregroundStyle(.secondary)
             } header: {
                 HStack(spacing: 6) { Text("Updates"); if updates.appUpdate != nil { UpdateDot() } }

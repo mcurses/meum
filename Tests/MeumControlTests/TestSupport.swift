@@ -67,6 +67,13 @@ final class FakeHandler: ControlHandler, @unchecked Sendable {
 
     var calls: [(method: String, params: JSON)] { lock.lock(); defer { lock.unlock() }; return _calls.map { ($0.0, $0.1) } }
 
+    private var _widgetList: JSON = ["directory": "/w", "apiVersion": "1", "widgets": []]
+    /// What widget.list answers; tests set it before calling `meum widget list`.
+    var widgetList: JSON {
+        get { lock.lock(); defer { lock.unlock() }; return _widgetList }
+        set { lock.lock(); _widgetList = newValue; lock.unlock() }
+    }
+
     static let wsA = "11111111-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
     static let wsB = "22222222-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
     static let tab1 = "AAAAAAAA-1111-4111-8111-111111111111"
@@ -98,6 +105,7 @@ final class FakeHandler: ControlHandler, @unchecked Sendable {
         case "workspace.new": return ["id": "33333333-cccc-4ccc-8ccc-cccccccccccc"]
         case "tab.new": return ["id": "44444444-dddd-4ddd-8ddd-dddddddddddd"]
         case "tab.paste": return ["tab": params["tab"] ?? .null]
+        case "widget.list": return widgetList
         case "tab.focused": return ["workspace": .string(Self.wsA), "tab": .string(Self.tab1), "widget": .null]
         case "workspace.select", "workspace.rename", "workspace.close", "tab.select", "tab.close", "tab.sendText",
              "status.set", "status.clear", "notify", "workspace.markRead", "tab.move", "split.resize":

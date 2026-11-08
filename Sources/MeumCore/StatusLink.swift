@@ -6,6 +6,16 @@ import Foundation
 /// only Settings changes, never the socket).
 public enum StatusLink {
     public static let alwaysOpen: Set<String> = ["http", "https"]
+    /// Schemes that can run things (`file:` opens any file with its app, a `.command` runs in Terminal; `shortcuts:`
+    /// runs any shortcut; the settings panes): asked about every time, never remembered.
+    public static let alwaysAsk: [String: String] = [
+        "file": "opens any file with its app, and can launch apps and run scripts",
+        "shortcuts": "can run any of your shortcuts",
+        "x-apple.systempreferences": "opens System Settings panes",
+    ]
+
+    /// Whether a yes to this scheme may be remembered.
+    public static func mayRemember(_ scheme: String) -> Bool { alwaysAsk[scheme.lowercased()] == nil }
 
     public enum Decision: Equatable {
         case open
@@ -16,7 +26,7 @@ public enum StatusLink {
 
     public static func decide(_ url: URL, allowed: [String]) -> Decision {
         guard let scheme = url.scheme?.lowercased(), isScheme(scheme) else { return .refuse }
-        if alwaysOpen.contains(scheme) || allowed.contains(scheme) { return .open }
+        if alwaysOpen.contains(scheme) || (allowed.contains(scheme) && mayRemember(scheme)) { return .open }
         return .ask(scheme)
     }
 

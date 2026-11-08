@@ -137,6 +137,7 @@ final class WorkspaceController: NSObject, SidebarHost {
             case .structure(let animate): self?.reconcile(animate: animate)
             case .cosmetic: self?.refreshChrome()
             }
+            self?.switcher.modelChanged()
         }
         agents.onChange = { [weak self] in self?.refreshChrome() }
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
@@ -164,6 +165,11 @@ final class WorkspaceController: NSObject, SidebarHost {
 
     /// A test instance started with `--background`: its window goes behind the others and takes no focus.
     var background = false
+    /// Workspace ▸ Go to Workspace… (⌘P).
+    private(set) lazy var switcher = SwitcherController(controller: self)
+
+    /// The shortcut of an action as the menu shows it ("⌘3"), nil when it has none.
+    func shortcutDisplay(_ id: String) -> String? { Shortcuts.combo(id, in: settings)?.display }
 
     func start() {
         watchWidgetClicks()
@@ -507,14 +513,7 @@ final class WorkspaceController: NSObject, SidebarHost {
         widgets?.hostStateChanged()   // the selected workspace, its name, colour or directory may have changed
     }
 
-    static func title(for t: Tab) -> String {
-        if let title = t.title?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty { return title }
-        if let cwd = t.cwd, !cwd.isEmpty {
-            if cwd == NSHomeDirectory() { return "~" }
-            return (cwd as NSString).lastPathComponent
-        }
-        return "shell"
-    }
+    static func title(for t: Tab) -> String { WorkspaceSearch.tabTitle(t) }
 
     // MARK: - Geometry and animation
 
@@ -719,6 +718,29 @@ final class WorkspaceController: NSObject, SidebarHost {
         return true
     }
 
+    /// meum to the front with its window, as a click on its Dock icon would (a link from another app).
+    func bringToFront() {
+        if background { return }   // a test instance never takes the user's focus
+        if window.isMiniaturized { window.deminiaturize(nil) }
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+    }
+
+    /// Shows the next tab, in sidebar order, where Claude waits for the user, else the next finished unread one
+    /// (Workspace ▸ Go to Next Waiting Session). False when there is none.
+    @discardableResult
+    func selectNextWaitingSession() -> Bool {
+        let tabs = store.state.workspaces.flatMap(\.allTabs).map(\.id)
+        var waiting = Set<UUID>(), unread = Set<UUID>()
+        for t in tabs {
+            guard let a = agents.state(forTab: t) else { continue }
+            if a.phase == .needsInput { waiting.insert(t) } else if a.unread { unread.insert(t) }
+        }
+        let current = selectedWorkspace?.focusedCard?.selectedTab.id
+        guard let next = NextWaiting.pick(order: tabs, current: current, waiting: waiting, unread: unread) else { return false }
+        return selectTab(next)
+    }
+
     func selectWorkspace(at index: Int) { store.mutate { $0.selectWorkspace(at: index) } }
     func selectAdjacentWorkspace(_ d: Int) { store.mutate { $0.selectAdjacentWorkspace(d) } }
 
@@ -896,7 +918,9 @@ final class WorkspaceController: NSObject, SidebarHost {
         case .ask(let scheme):
             let name = store.state.workspace(id)?.name ?? "a workspace"
             guard confirmLinkScheme(scheme, url, name) else { return }
-            setSetting?("statusLinkSchemes", .array((settings.statusLinkSchemes + [scheme]).map { .string($0) }))
+            if StatusLink.mayRemember(scheme) {
+                setSetting?("statusLinkSchemes", .array((settings.statusLinkSchemes + [scheme]).map { .string($0) }))
+            }
             openURL(url)
         }
     }
@@ -905,11 +929,14 @@ final class WorkspaceController: NSObject, SidebarHost {
     /// open without asking). A debug instance answers from `DebugControl.linkSchemeAnswer` instead.
     var confirmLinkScheme: (_ scheme: String, _ url: URL, _ workspace: String) -> Bool = { scheme, url, workspace in
         let alert = NSAlert()
-        alert.messageText = "Open “\(scheme):” links from the sidebar?"
+        let risky = StatusLink.alwaysAsk[scheme]
+        alert.messageText = risky == nil ? "Open “\(scheme):” links from the sidebar?" : "Open this “\(scheme):” link?"
         alert.informativeText = "A status entry in \(workspace) links to \(url.absoluteString)\n\nAny program running in a tab "
-            + "can set a status entry. Links of this kind can open apps or change settings. If you allow them, later "
-            + "\(scheme): links open without asking (Settings ▸ Sidebar lists them)."
-        alert.addButton(withTitle: "Open and Allow")
+            + "can set a status entry. "
+            + (risky.map { "A \(scheme): link \($0), so meum asks every time." }
+                ?? "Links of this kind can open apps or change settings. If you allow them, later \(scheme): links open "
+                    + "without asking (Settings ▸ Sidebar lists them).")
+        alert.addButton(withTitle: risky == nil ? "Open and Allow" : "Open")
         alert.addButton(withTitle: "Cancel")
         return alert.runModal() == .alertFirstButtonReturn
     }

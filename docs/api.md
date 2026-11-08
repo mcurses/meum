@@ -11,7 +11,8 @@ a running meum serves; a client should ask before it relies on a newer one. Chan
 method, a new optional parameter with a default, a new field in an answer.
 
 The app's bundle identifier `io.github.mcurses.meum` is part of `meum.v1`: tools find meum by it (to tell
-whether it is the app in front, say), and it stays the same across any rename of the app.
+whether it is the app in front, say), and it stays the same across any rename of the app. So is the link
+`meum://focus?claude=<session id>`: it does what `tab.select {claude, activate: true}` does, and nothing else.
 
 ## Methods
 
@@ -56,7 +57,7 @@ whether it is the app in front, say), and it stays the same across any rename of
 ### tab
 
 - `tab.new`: `{workspace?, card?, cwd?, command?, split?: "right"|"down", widget?, config?}` -> `{id, workspace, card}`: a terminal tab, in `card` (default the focused card) or in a new card split off it.
-- `tab.select`: `{tab}`: shows the tab (and its workspace).
+- `tab.select`: `{tab | claude, activate?}`: shows the tab (and its workspace). `claude` names the tab by the Claude Code session running in it (its session id, or a unique prefix of 8 or more characters); `activate: true` also brings meum to the front, for a click in another app.
 - `tab.close`: `{tab}`: closes the tab and ends its terminal.
 - `tab.sendText`: `{tab, text}`: typed into the tab's terminal as keystrokes; a newline submits.
 - `tab.focused`: `{}` -> `{workspace, tab, widget, name, labels}`: the selected workspace's id and its focused tab (a terminal or a widget tab; `widget` is the widget id, null for a terminal); `name` is the Claude Code session's own name, null without one; `labels` the labels that session set on its tab (`tab.setLabels`, empty without).

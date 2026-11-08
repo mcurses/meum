@@ -207,7 +207,7 @@ public enum MCPServer {
             }
             walk(ws["root"])
         }
-        return [
+        var result: [String: JSON] = [
             "you": ["workspace": here.workspace.map { .string($0) } ?? .null, "tab": here.tab.map { .string($0) } ?? .null],
             "workspaces": .array(workspaces),
             "widgets": .array(widgets.map { w in
@@ -215,6 +215,19 @@ public enum MCPServer {
             }),
             "widgetTabsInYourWorkspace": .array(widgetTabs),
         ]
+        // a session keeps the meum tools it started with: say so when meum has been updated since
+        if let note = staleNote(running: (try? call(MeumMethod.ping, .object([:])))?["version"]?.stringValue,
+                                mine: ControlInfo.appVersion) {
+            result["note"] = .string(note)
+        }
+        return .object(result)
+    }
+
+    /// The line for a session whose MCP server is older than the meum app it talks to; nil when they match or either
+    /// is a development build.
+    static func staleNote(running: String?, mine: String?) -> String? {
+        guard let running, let mine, running != mine else { return nil }
+        return "meum was updated to \(running); this session still runs the \(mine) tools. Restart Claude Code here for the newer ones."
     }
 
     /// Runs the server on stdin/stdout until stdin closes.

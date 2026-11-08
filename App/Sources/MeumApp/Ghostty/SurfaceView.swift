@@ -15,6 +15,8 @@ import QuartzCore
 /// to libghostty as unretained userdata; that is safe because `destroySurface()` is the only place the surface
 /// is freed and the owner keeps the view alive until then.
 final class SurfaceView: NSView {
+    /// Not a title bar: a drag here is meum's own (a tab, a card, a selection), never a window move (see CardHostView).
+    override var mouseDownCanMoveWindow: Bool { false }
     nonisolated(unsafe) private(set) var surface: ghostty_surface_t?
 
     let tabID: UUID

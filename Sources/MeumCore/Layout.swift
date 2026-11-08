@@ -374,6 +374,19 @@ extension AppState {
         workspaces.first { $0.tab(tabID) != nil }
     }
 
+    public enum SessionLookup: Equatable { case found(UUID), none, ambiguous(Int) }
+
+    /// The tab whose Claude Code session has this id, by the whole id or a unique prefix of at least 8 characters
+    /// (case doesn't matter).
+    public func tab(claudeSession ref: String) -> SessionLookup {
+        let r = ref.lowercased()
+        let tabs = workspaces.flatMap(\.allTabs).filter { $0.agent != nil }
+        if let t = tabs.first(where: { $0.agent?.sessionID.lowercased() == r }) { return .found(t.id) }
+        guard r.count >= 8 else { return .none }
+        let m = tabs.filter { $0.agent?.sessionID.lowercased().hasPrefix(r) == true }
+        return m.count == 1 ? .found(m[0].id) : m.isEmpty ? .none : .ambiguous(m.count)
+    }
+
     /// Appends a workspace (or inserts it at `index`) and optionally selects it.
     public mutating func addWorkspace(_ ws: Workspace, at index: Int? = nil, select: Bool = true) {
         let i = min(max(0, index ?? workspaces.count), workspaces.count)

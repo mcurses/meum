@@ -83,7 +83,13 @@ final class WidgetInstaller {
         try? fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
         let staging = directory.appendingPathComponent(".\(e.id)-\(UUID().uuidString)")
         defer { try? fm.removeItem(at: staging) }
-        guard (try? fm.copyItem(at: URL(fileURLWithPath: spec.executable), to: staging)) != nil,
+        // a symlink would be copied as a link, and the check would read whatever it points at: copy the real file,
+        // and only one that is inside the widget folder
+        guard let source = WidgetHelpers.realFile(URL(fileURLWithPath: spec.executable), inside: e.folder) else {
+            Log.error("widget \(e.id): helper \(spec.executable) is not a file inside the widget folder; not started")
+            return nil
+        }
+        guard (try? fm.copyItem(at: source, to: staging)) != nil, WidgetHelpers.isPlainFile(staging),
               let hash = try? WidgetHash.sha256(of: staging) else {
             Log.error("widget \(e.id): helper \(spec.executable) could not be read; not started")
             return nil
@@ -275,8 +281,11 @@ final class WidgetInstaller {
         let libHash = try WidgetHash.sha256(of: library)
         var helperHash: String?
         if let h = manifest["helper"] as? [String: Any], let cmd = h["command"] as? String {
-            guard !cmd.hasPrefix("/"), !cmd.contains("..") else { throw InstallError(description: "the helper must live inside the widget folder") }
-            helperHash = try WidgetHash.sha256(of: folder.appendingPathComponent(cmd))
+            guard WidgetHelpers.isInsideFolder(cmd),
+                  let real = WidgetHelpers.realFile(folder.appendingPathComponent(cmd), inside: folder) else {
+                throw InstallError(description: "the helper must be a file inside the widget folder (not a link out of it)")
+            }
+            helperHash = try WidgetHash.sha256(of: real)
         }
 
         // swap it in, keeping the disabled switch

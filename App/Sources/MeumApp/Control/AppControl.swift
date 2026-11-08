@@ -11,6 +11,12 @@ import UserNotifications
 /// - keeps the git branch of each workspace's focused tab cwd.
 @MainActor
 final class AppControl {
+    /// A tab's role chips (its session's labels) going away, with why: chips that vanish should leave a trace.
+    static func logChipDrop(_ tab: UUID, _ session: String, _ labels: [String], _ cause: String) {
+        guard !labels.isEmpty else { return }
+        Log.info("chips dropped: tab \(tab.uuidString.prefix(8)) session \(session.prefix(8)) [\(labels.joined(separator: ", "))]: \(cause)")
+    }
+
     let bus = EventBus()
     let agents: AgentService
     let agentSource: LiveAgentStateSource
@@ -154,9 +160,11 @@ final class AppControl {
             let reason = payload["reason"]?.stringValue ?? "other"
             let sid = payload["session_id"]?.stringValue
             if reason != "other", let current, sid == nil || sid == current.sessionID {
+                if let l = current.labels { Self.logChipDrop(tabID, current.sessionID, l, "session ended (\(reason))") }
                 controller.store.mutate(.cosmetic) { $0.updateTab(tabID) { $0.agent = nil } }
             } else if let current, current.labels != nil, sid == nil || sid == current.sessionID {
                 // the snapshot stays for a resume, but an ended session shows no labels
+                Self.logChipDrop(tabID, current.sessionID, current.labels ?? [], "session ended (other)")
                 controller.store.mutate(.cosmetic) { $0.updateTab(tabID) { $0.agent?.labels = nil } }
             }
         } else if let st = agents.state(of: tabID.uuidString) {
@@ -168,6 +176,9 @@ final class AppControl {
                                      transcriptPath: st.transcriptPath, cwd: st.cwd, name: known,
                                      labels: same ? current?.labels : nil)
             if snap != current {
+                if !same, let current, let l = current.labels {
+                    Self.logChipDrop(tabID, current.sessionID, l, "another session (\(st.sessionID)) reported from the tab, \(event ?? "?")")
+                }
                 controller.store.mutate(.cosmetic) { $0.updateTab(tabID) { $0.agent = snap } }
             }
             refreshSessionName(tab: tabID, sessionID: st.sessionID, configDir: st.configDir)
@@ -406,7 +417,7 @@ final class LiveAgentStateSource: AgentStateSource {
     func summary(forWorkspace ws: Workspace) -> WorkspaceAgentSummary {
         let s = service.summary(tabs: ws.allTabs.map(\.id.uuidString))
         return WorkspaceAgentSummary(liveSessions: s.live, anyUnread: s.anyUnread, anyNeedsInput: s.anyNeedsInput,
-                                     needsInput: s.needsInput, unread: s.unread)
+                                     needsInput: s.needsInput, unread: s.unread, running: s.running)
     }
 }
 

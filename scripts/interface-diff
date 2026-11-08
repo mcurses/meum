@@ -83,7 +83,8 @@ def compare(before_text, now_text):
     defaults = {}
     for c, l in now.values():
         m = re.match(r"extension (?:\w+::)?(\w+)\b", c.split(" > ")[-1]) if c else None
-        if m and " > " not in c:
+        # a default in a constrained extension (`where …`) covers only some conformers: it doesn't count
+        if m and " > " not in c and " where " not in c:
             defaults.setdefault(m.group(1), set()).add(bare(l))
     undefaulted = []
     for k in added_keys:
@@ -94,6 +95,20 @@ def compare(before_text, now_text):
     return gone, added, sorted(undefaulted)
 
 
+def answer_fields(text):
+    """{method: set of field names in its documented answer}: the names inside "-> `…`" on its api.md line."""
+    out = {}
+    for name, answer in re.findall(r"^- `([\w.]+)`:[^\n]*?-> `([^`]*)`", text, re.M):
+        out[name] = set(re.findall(r"[A-Za-z_]\w*", answer))
+    return out
+
+
+def answer_fields_lost(old, new):
+    """"method: field, …" for every answer field the old api.md documents that the new one doesn't."""
+    o, n = answer_fields(old), answer_fields(new)
+    return sorted(f"{m}: {', '.join(sorted(o[m] - n[m]))}" for m in o if m in n and o[m] - n[m])
+
+
 def self_test():
     base = "public protocol W: AnyObject {\n  var view: Int { get }\n  func a()\n}\n" \
            "public extension W {\n  func a() {}\n}\n"
@@ -101,16 +116,25 @@ def self_test():
     plus_default = plus_bare.replace("  func a() {}\n}", "  func a() {}\n  func b() {}\n}")
     plus_var = base.replace("  func a()\n}", "  func a()\n  var c: Bool { get }\n}") \
                    .replace("  func a() {}\n}", "  func a() {}\n  var c: Bool { false }\n}")
+    plus_where = plus_bare.replace("public extension W {\n  func a() {}\n}\n",
+                                   "public extension W {\n  func a() {}\n}\npublic extension W where Self: Equatable {\n  func b() {}\n}\n")
     fewer = base.replace("  func a()\n}", "}").replace("public extension W {\n  func a() {}\n}\n", "")
     i = {k: interface({"W.swift": v}) for k, v in
-         [("base", base), ("bare", plus_bare), ("default", plus_default), ("var", plus_var), ("fewer", fewer)]}
+         [("base", base), ("bare", plus_bare), ("default", plus_default), ("var", plus_var), ("fewer", fewer),
+          ("where", plus_where)]}
     checks = [
         ("a requirement without a default is seen", compare(i["base"], i["bare"])[2] != []),
         ("a requirement with a default passes", compare(i["base"], i["default"])[2] == []),
+        ("a default only in a `where` extension doesn't count", compare(i["base"], i["where"])[2] != []),
         ("a property requirement with a default passes", compare(i["base"], i["var"])[2] == []),
         ("an addition is listed", compare(i["base"], i["default"])[1] != []),
         ("a removed requirement is seen", compare(i["base"], i["fewer"])[0] != []),
         ("no change is no change", compare(i["base"], i["base"]) == ([], [], [])),
+    ]
+    old_doc = "- `a.b`: `{}` -> `{id, name}`: x.\n"
+    checks += [
+        ("an answer keeping its fields passes", answer_fields_lost(old_doc, old_doc.replace("name}", "name, more}")) == []),
+        ("an answer losing a field is seen", answer_fields_lost(old_doc, old_doc.replace(", name", "")) == ["a.b: name"]),
     ]
     failed = [name for name, ok in checks if not ok]
     if failed:
@@ -155,12 +179,16 @@ def main():
 
     old_api = git("show", f"{ref}:docs/api.md")
     if old_api:
+        new_api = open(os.path.join(ROOT, "docs/api.md")).read()
         api = lambda t: set(re.findall(r"^- `([\w.]+)`:", t, re.M))
-        gone = sorted(api(old_api) - api(open(os.path.join(ROOT, "docs/api.md")).read()))
+        gone = sorted(api(old_api) - api(new_api))
         if gone:
             problems.append("control API methods or events of the last release are gone: " + ", ".join(gone))
         else:
             print("interface-diff: control API keeps every method and event")
+        lost = answer_fields_lost(old_api, new_api)
+        if lost:
+            problems.append("control API answers lost fields the last release had: " + "; ".join(lost))
     else:
         print(f"interface-diff: no docs/api.md in {ref} yet; control API not compared")
 

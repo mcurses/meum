@@ -8,7 +8,7 @@ renaming is a search and replace:
 - the env prefix `MEUM_`
 
 Read first: `docs/design/sidebar-widgets-extensibility.md` (principles, layers) and the spike results in
-`docs/research/2026-11-02-cmux-fork-or-replace.md` and `spikes/*/RESULT.md`.
+`docs/research/2026-11-02-cmux-fork-or-replace.md` and `docs/research/spike-*.md`.
 
 ## Parts and owners
 
@@ -18,6 +18,7 @@ Read first: `docs/design/sidebar-widgets-extensibility.md` (principles, layers) 
 | Control channel: wire protocol, socket server/client, event bus, agent tracker, resume builder, hook installer (host-free) | `Sources/MeumControl` | control lane | MeumCore (only `Product`, ids) |
 | `meum` CLI | `Sources/meum` | control lane | MeumControl |
 | `meum-hook` (POSIX sh) | `Resources/bin/meum-hook` | control lane | `nc` |
+| (`meum-hook` also prints two factual lines on SessionStart, once meum took the event: the session runs in a meum tab, and what it can label. Claude Code adds them to the session's context.) | | | |
 | The app: AppKit/SwiftUI, libghostty bridge, container window, cards, tabs, sidebar, widget slot, zmx sessions | `App/` | app lane | MeumCore, GhosttyKit, zmx |
 | Build scripts | `scripts/setup.sh` (vendor Ghostty + zmx), `scripts/build-app.sh` (assemble `build/meum.app`) | app lane | |
 | Integration (ControlHandler in the app, dots from the tracker, reboot resume, Tamago widget) | `App/` | integration step, after both lanes land | everything |

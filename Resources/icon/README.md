@@ -1,6 +1,6 @@
 # meum icon
 
-Two open upright planes of sage-green glass on light paper.
+Two open upright planes as ivory marks on a saturated paper ground (icon set v2, 2026-11-07).
 
 - `meum-1024-opaque.png`: the artwork, square and full-bleed (no rounded plate: macOS applies its own mask). The
   source for `meum.icns`.

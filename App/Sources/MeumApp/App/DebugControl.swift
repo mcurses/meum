@@ -29,6 +29,10 @@ import MeumCore
 ///   agent TAB|focused running|idle|needsInput|end [unread]   feeds a synthetic Claude hook to the agent tracker
 ///   snapshot TAB|focused SESSIONID      stores an AgentSnapshot on the tab (for the resume path)
 ///   rename-ui                           opens the sidebar's inline rename for the selected workspace
+///   switcher open|close|toggle          Go to Workspace (⌘P); its state is "switcher" in dump-model
+///   switcher query TEXT                 types TEXT into its field (replacing what is there)
+///   switcher move N  switcher choose [N]   moves the selection by N rows; goes to the selected (or Nth) row
+///   switcher shot FILE                  a PNG of its list (the field and the blur don't draw off screen)
 ///   quit
 @MainActor
 final class DebugControl {
@@ -244,6 +248,10 @@ final class DebugControl {
         case "resize":
             guard let d = Direction(rawValue: rest) else { throw Failure(description: "bad direction") }
             controller.resize(d)
+        case "open-url":
+            // open-url URL: what opening a meum:// link does (without LaunchServices, which might pick another meum)
+            guard let url = URL(string: rest), let app = NSApp.delegate as? AppDelegate else { throw Failure(description: "need URL") }
+            app.openLink(url)
         case "link-answer":
             // link-answer yes|no: the answer to the next "open links of this kind?" questions
             linkSchemeAnswer = rest == "yes"
@@ -384,6 +392,20 @@ final class DebugControl {
             if args.count == 2, args[0] == "height", let h = Double(args[1]) { settingsWindow.setHeight(h) }
         case "rename-ui":
             controller.renameSelectedWorkspace()
+        case "switcher":
+            let sw = controller.switcher
+            switch args.first ?? "" {
+            case "open": sw.open()
+            case "close": sw.close()
+            case "toggle": sw.toggle()
+            case "query": sw.setQuery(rest.split(separator: " ", maxSplits: 1).dropFirst().first.map(String.init) ?? "")
+            case "move": sw.move(Int(args.dropFirst().first ?? "1") ?? 1)
+            case "choose": sw.choose(args.dropFirst().first.flatMap { Int($0) })
+            case "shot":
+                guard let path = args.dropFirst().first else { throw Failure(description: "need FILE") }
+                try sw.snapshot().write(to: URL(fileURLWithPath: path))
+            default: throw Failure(description: "switcher open|close|toggle|query TEXT|move N|choose [N]|shot FILE")
+            }
         case "quit":
             NSApp.terminate(nil)
         default:
@@ -482,6 +504,7 @@ final class DebugControl {
             "windowFrame": [controller.window.frame.minX, controller.window.frame.minY,
                             controller.window.frame.width, controller.window.frame.height],
             "keyWindow": controller.window.isKeyWindow,
+            "switcher": controller.switcher.debugState,
             "dividers": controller.dividerViews.map { id, v in
                 ["split": id.uuidString, "axis": v.axis.rawValue,
                  "frame": [v.frame.minX, v.frame.minY, v.frame.width, v.frame.height]] as [String: Any]

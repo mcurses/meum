@@ -1,6 +1,7 @@
 #!/bin/sh
 # Builds a meum release that opens on other people's Macs without Gatekeeper warnings:
-#   1. scripts/setup.sh --check (the vendored Ghostty and zmx are exactly their pins and patches), then
+#   1. scripts/setup.sh --release (the vendored Ghostty and zmx are exactly their pins and patches, and the build
+#      outputs that ship are built from them), then
 #      scripts/build-app.sh (release config, version from the argument), then scripts/api-smoke against that build
 #   2. re-sign every Mach-O in the bundle with the Developer ID, hardened runtime and a secure timestamp
 #      (the app itself with scripts/entitlements.plist)
@@ -89,9 +90,10 @@ log() { echo "release: $*"; }
 
 BUILT=$(git -C "$ROOT" rev-parse HEAD)   # the commit this release is built from (full id)
 # the vendored dependencies go into the notarized app: refuse a tree edited after setup, or another checkout linked in
-"$ROOT/scripts/setup.sh" --check || { echo "release: vendor/ghostty or vendor/zmx is not its pinned version (scripts/setup.sh --check)" >&2; exit 1; }
+# (sources, and the build outputs that ship: zmx rebuilt every time, Ghostty unless setup's own build is recorded)
+"$ROOT/scripts/setup.sh" --release || { echo "release: vendor/ghostty or vendor/zmx is not its pinned version and build (scripts/setup.sh --release)" >&2; exit 1; }
 log "building $VERSION"
-MEUM_VERSION="$VERSION" "$ROOT/scripts/build-app.sh" release
+MEUM_VERSION="$VERSION" MEUM_URL_SCHEME=1 "$ROOT/scripts/build-app.sh" release
 # every API method against the built app, isolated from the user's meum (state, widgets, zmx namespace)
 log "api smoke test"
 "$ROOT/scripts/api-smoke" || { echo "release: the API smoke test failed" >&2; exit 1; }

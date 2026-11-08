@@ -301,7 +301,9 @@ final class ServerIntegrationTests: XCTestCase {
 
         let r1 = fire(event("SessionStart", #","source":"startup""#), env: hookEnv(config: "/Users/dev/.claude-work"))
         XCTAssertEqual(r1.status, 0)
-        XCTAssertEqual(r1.stdout, "", "stdout would be injected into Claude's context")
+        // SessionStart: once meum took the event, two lines for the session's context (where it runs, what it may do)
+        XCTAssertTrue(r1.stdout.hasPrefix("You are running in a tab of meum"), r1.stdout)
+        XCTAssertEqual(r1.stdout.split(separator: "\n").count, 2, r1.stdout)
         XCTAssertEqual(r1.stderr, "")
         XCTAssertLessThan(r1.seconds, 1.0)
         XCTAssertEqual(try stream.next()?.data["agent"]?["phase"], "idle")
@@ -374,7 +376,8 @@ final class ServerIntegrationTests: XCTestCase {
         defer { s.stop() }
         let r = fire(Self.sessionStart, env: hookEnv(socket: dir + "/h.sock"))
         XCTAssertEqual(r.status, 0)
-        XCTAssertEqual(r.stdout, "")
+        // the stuck server took the event, so the session still gets its two context lines, never anything else
+        XCTAssertTrue(r.stdout.isEmpty || r.stdout.hasPrefix("You are running in a tab of meum"), r.stdout)
         XCTAssertLessThan(r.seconds, 2.5, "nc -w 1 must cut a stuck server off")
     }
 

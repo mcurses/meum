@@ -43,7 +43,8 @@ final class APIDocTests: XCTestCase {
         method, a new optional parameter with a default, a new field in an answer.
 
         The app's bundle identifier `io.github.mcurses.meum` is part of `meum.v1`: tools find meum by it (to tell
-        whether it is the app in front, say), and it stays the same across any rename of the app.
+        whether it is the app in front, say), and it stays the same across any rename of the app. So is the link
+        `meum://focus?claude=<session id>`: it does what `tab.select {claude, activate: true}` does, and nothing else.
 
         ## Methods
 

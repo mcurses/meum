@@ -223,8 +223,8 @@ public enum SettingsJSON {
         case "sidebarShowPin": s.sidebarShowPin = try bool()
         case "statusLinkSchemes":
             let items = v.isNull ? [] : v.arrayValue?.compactMap(\.stringValue).map { $0.lowercased() }
-            guard let items, items.allSatisfy({ StatusLink.isScheme($0) && !StatusLink.alwaysOpen.contains($0) }) else {
-                throw ControlError.invalidParams("'statusLinkSchemes' needs a list of URL schemes other than http(s)")
+            guard let items, items.allSatisfy({ StatusLink.isScheme($0) && !StatusLink.alwaysOpen.contains($0) && StatusLink.mayRemember($0) }) else {
+                throw ControlError.invalidParams("'statusLinkSchemes' needs a list of URL schemes other than http(s), file, shortcuts and x-apple.systempreferences (those are asked about every time)")
             }
             s.statusLinkSchemes = Array(NSOrderedSet(array: items)).compactMap { $0 as? String }
         case "shortcuts":

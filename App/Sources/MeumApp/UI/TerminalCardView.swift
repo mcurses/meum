@@ -108,6 +108,8 @@ final class TerminalCardView: CardHostView {
 /// Tab strip: one segment per tab (agent dot, title, close button) and a "+" at the end. Drawn, not built
 /// from subviews, so a relayout is one `needsDisplay`.
 final class TabStripView: NSView {
+    /// Not a title bar: a drag here is meum's own (a tab, a card, a selection), never a window move (see CardHostView).
+    override var mouseDownCanMoveWindow: Bool { false }
     static let height: CGFloat = 28
 
     struct Item: Equatable {
@@ -339,6 +341,8 @@ final class TabStripView: NSView {
 /// tab in a strip would (into another card, or onto a card's edge to split it; Escape cancels). It sits in the
 /// terminal's top padding, faint until the pointer is over it.
 final class GrabHandleView: NSView {
+    /// Not a title bar: a drag here is meum's own (a tab, a card, a selection), never a window move (see CardHostView).
+    override var mouseDownCanMoveWindow: Bool { false }
     static let size = NSSize(width: 56, height: 10)
     /// The session's labels, drawn as chips right of the handle (a one-tab card has no strip to show them).
     var labels: [String] = [] {
@@ -462,14 +466,16 @@ enum AgentLegend {
         }
     }
 
-    /// The sidebar's dots: one per live session; orange waits for you, blue finished unread, grey everything else.
+    /// The sidebar's dots: one per live session; orange waits for you, blue finished unread, green working, grey idle.
     static func workspace(_ a: WorkspaceAgentSummary) -> String {
         guard a.liveSessions > 0 else { return "" }
-        let rest = max(0, a.liveSessions - a.needsInput - a.unread)
+        let working = min(a.running, max(0, a.liveSessions - a.needsInput - a.unread))
+        let rest = max(0, a.liveSessions - a.needsInput - a.unread - working)
         var parts: [String] = []
         if a.needsInput > 0 { parts.append("\(a.needsInput) waiting for you (orange)") }
         if a.unread > 0 { parts.append("\(a.unread) finished, not read yet (blue)") }
-        if rest > 0 { parts.append("\(rest) working or idle (grey)") }
+        if working > 0 { parts.append("\(working) working (green)") }
+        if rest > 0 { parts.append("\(rest) idle (grey)") }
         return "Claude sessions: " + parts.joined(separator: ", ")
     }
 

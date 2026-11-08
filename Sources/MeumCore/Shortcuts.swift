@@ -105,6 +105,8 @@ public enum Shortcuts {
             .init("newWorkspace", "New Workspace", "Workspace", "cmd+n"),
             .init("previousWorkspace", "Previous Workspace", "Workspace", "shift+cmd+["),
             .init("nextWorkspace", "Next Workspace", "Workspace", "shift+cmd+]"),
+            .init("goToWorkspace", "Go to Workspace…", "Workspace", "cmd+p"),
+            .init("nextWaiting", "Go to Next Waiting Session", "Workspace", "cmd+j"),
         ]
         for i in 1...9 { a.append(.init("workspace\(i)", "Workspace \(i)", "Workspace", "cmd+\(i)")) }
         a += [

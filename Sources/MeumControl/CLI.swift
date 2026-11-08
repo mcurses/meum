@@ -66,6 +66,9 @@ public enum CLI {
                                               --widget: a widget tab, the widget instead of a terminal;
                                               --config: its settings (e.g. '{"url":"http://localhost:5173"}')
       tab select|close <tab>
+      tab focus --claude-id ID                the tab running that Claude Code session, its workspace shown and
+                                              meum in front (the whole session id or a unique prefix; `meum tree`
+                                              shows the ids). Other apps: the link meum://focus?claude=ID
       tab send [--enter] <tab> <text|->       type text into a tab ('-' reads stdin)
       tab paste [--submit] <tab> <text|->     paste text into a tab's terminal (bracketed paste; works in
                                               hidden workspaces); --submit presses Return after it
@@ -113,6 +116,7 @@ public enum CLI {
       resume-command <tab-json|->             print the shell command that resumes a tab's Claude session
       call <method> [params-json]             raw API call
       help | version
+      (uninstall: see Help ▸ Uninstall… in the app)
 
     <ws>, <tab>, CARD and <split> accept a full id or a unique id prefix; workspaces also a unique name.
     Inside a meum tab $MEUM_WORKSPACE and $MEUM_TAB are the defaults where a workspace or tab is optional.
@@ -537,6 +541,11 @@ public enum CLI {
                 params["split"] = .string(s)
             }
             printID(ctx, try ctx.rpc(MeumMethod.tabNew, .object(params)))
+        case "focus":
+            let p = try parse(&ctx, rest, values: ["claude-id"])
+            try p.expectPositionals([], command: "meum tab focus --claude-id ID")
+            guard let sid = p.value("claude-id"), !sid.isEmpty else { throw CLIError.usage("meum tab focus --claude-id ID") }
+            printOK(ctx, try ctx.rpc(MeumMethod.tabSelect, ["claude": .string(sid), "activate": .bool(true)]))
         case "select", "close":
             let p = try parse(&ctx, rest)
             try p.expectPositionals(["tab"], command: "meum tab \(sub)")
@@ -644,12 +653,15 @@ public enum CLI {
                 ($0["position"]?.intValue ?? Int.max) < ($1["position"]?.intValue ?? Int.max)
             }
             for w in ws {
+                let failed = w["error"]?.stringValue != nil || w["trust"]?.stringValue == "unverified"
                 let mark = w["loaded"]?.boolValue == true ? (w["shown"]?.boolValue == true ? "*" : "~")
-                    : (w["disabled"]?.boolValue == true ? "-" : "!")
+                    : w["disabled"]?.boolValue == true ? "-"
+                    : (w["scope"]?.stringValue == "tile" && !failed) ? "+" : "!"
                 let trust = w["trust"]?.stringValue.map { $0 == "unverified" ? "  UNVERIFIED" : "  (\($0))" } ?? ""
                 lines.append("\(mark) \(w["id"]?.stringValue ?? "?")  \(w["displayName"]?.stringValue ?? "")  [\(w["scope"]?.stringValue ?? "global")]\(trust)  \(w["folder"]?.stringValue ?? "")")
             }
             if r["widgets"]?.arrayValue?.isEmpty ?? true { lines.append("  (none)") }
+            else { lines.append("(* shown  ~ loaded, hidden  + opens as a tab  - switched off  ! failed to load)") }
             if let e = r["error"]?.stringValue { lines.append("error: \(e)") }
             return lines.joined(separator: "\n")
         }

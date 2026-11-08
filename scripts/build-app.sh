@@ -61,6 +61,16 @@ cp -R "$GHOSTTY/zig-out/share/terminfo" "$APP/Contents/Resources/terminfo"
 
 VERSION="${MEUM_VERSION:-$(cat "$ROOT/VERSION")}"   # VERSION: the release being prepared (local builds say so too)
 BUILD="$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo dev)"
+# The meum:// link scheme (meum://focus?claude=ID) only in builds that get installed (install-local.sh, release.sh set
+# MEUM_URL_SCHEME=1): a development or test build in build/ would otherwise be one more handler macOS might pick.
+URL_TYPES=""
+if [ "${MEUM_URL_SCHEME:-0}" = 1 ]; then
+  URL_TYPES='  <key>CFBundleURLTypes</key>
+  <array><dict>
+    <key>CFBundleURLName</key><string>io.github.mcurses.meum</string>
+    <key>CFBundleURLSchemes</key><array><string>meum</string></array>
+  </dict></array>'
+fi
 cat > "$APP/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -78,7 +88,7 @@ cat > "$APP/Contents/Info.plist" <<EOF
   <key>NSHighResolutionCapable</key><true/>
   <key>NSPrincipalClass</key><string>NSApplication</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>
-</dict>
+$URL_TYPES</dict>
 </plist>
 EOF
 
