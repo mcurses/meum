@@ -39,6 +39,7 @@ public struct Settings: Codable, Equatable, Sendable {
     public var sidebarShowAgentDots: Bool = true   // one dot per Claude session
     public var sidebarShowShortcuts: Bool = true   // the ⌘1…⌘9 hints
     public var sidebarShowPin: Bool = true   // the pin on pinned workspaces
+    public var sidebarShowIcons: Bool = false   // the workspace's icon before its name (the rail always shows it)
     /// Link schemes (besides http and https) a status entry's click may open without asking: each added when the
     /// user said yes to its first link (`StatusLink`). Changed only in meum, never over the socket.
     public var statusLinkSchemes: [String] = []
@@ -126,6 +127,7 @@ public struct Settings: Codable, Equatable, Sendable {
         sidebarShowAgentDots = v(.sidebarShowAgentDots, d.sidebarShowAgentDots)
         sidebarShowShortcuts = v(.sidebarShowShortcuts, d.sidebarShowShortcuts)
         sidebarShowPin = v(.sidebarShowPin, d.sidebarShowPin)
+        sidebarShowIcons = v(.sidebarShowIcons, d.sidebarShowIcons)
         statusLinkSchemes = v(.statusLinkSchemes, d.statusLinkSchemes)
         widgetHeight = v(.widgetHeight, d.widgetHeight)
         widgetHeightAuto = v(.widgetHeightAuto, d.widgetHeightAuto)

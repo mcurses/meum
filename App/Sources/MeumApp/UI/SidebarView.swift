@@ -77,6 +77,7 @@ struct SidebarDisplay: Equatable {
     var agentDots = true
     var shortcuts = true
     var pin = true
+    var icons = false
 
     init() {}
     init(_ s: Settings) {
@@ -88,7 +89,11 @@ struct SidebarDisplay: Equatable {
         agentDots = s.sidebarShowAgentDots
         shortcuts = s.sidebarShowShortcuts
         pin = s.sidebarShowPin
+        icons = s.sidebarShowIcons
     }
+
+    /// Where a row's name and second line start: after the colour stripe, and after the icon when it is shown.
+    var textInset: CGFloat { icons ? 42 : 16 }
 
     func hasSubtitle(_ i: SidebarItem) -> Bool {
         (branch && i.branch != nil) || (directory && i.directory != nil) || (status && !i.status.isEmpty)
@@ -511,6 +516,15 @@ final class SidebarView: FlippedView, NSTextFieldDelegate {
         // first line: name, agent dots, ⌘N hint; second line (if any): branch and status entries
         let sub = display.hasSubtitle(item)
         let midY = sub ? r.minY + 14 : r.midY
+        if display.icons {
+            // the rail's tile, smaller: the icon on the workspace's colour, centred on the row
+            let side: CGFloat = 22
+            let tile = NSRect(x: r.minX + 14, y: r.midY - side / 2, width: side, height: side)
+            (Self.nsColor(hex: item.color)?.withAlphaComponent(0.35) ?? NSColor(white: 1, alpha: 0.1)).setFill()
+            NSBezierPath(roundedRect: tile, xRadius: 6, yRadius: 6).fill()
+            Self.drawIcon(item.icon.flatMap(WorkspaceIcon.init) ?? WorkspaceIcon.fallback(forName: item.name),
+                          in: tile, selected: item.selected, scale: 0.8)
+        }
         if sub, item.id != editingID { drawSubtitle(item, in: r) }
         // right side: agent dots, then the ⌘N hint
         var right = r.maxX - 8
@@ -553,7 +567,7 @@ final class SidebarView: FlippedView, NSTextFieldDelegate {
             .foregroundColor: NSColor(white: 1, alpha: item.selected ? 0.95 : 0.75),
             .paragraphStyle: para,
         ]
-        let x = r.minX + 16
+        let x = r.minX + display.textInset
         let nameRect = NSRect(x: x, y: midY - 8.5, width: max(0, right - x - 4), height: 18)
         (item.name as NSString).draw(in: nameRect, withAttributes: attrs)
         if (item.name as NSString).size(withAttributes: attrs).width > nameRect.width {
@@ -596,22 +610,22 @@ final class SidebarView: FlippedView, NSTextFieldDelegate {
         }
     }
 
-    static func drawIcon(_ icon: WorkspaceIcon, in tile: NSRect, selected: Bool) {
+    static func drawIcon(_ icon: WorkspaceIcon, in tile: NSRect, selected: Bool, scale: CGFloat = 1) {
         let alpha: CGFloat = selected ? 0.95 : 0.8
         switch icon {
         case .symbol(let name):
-            let config = NSImage.SymbolConfiguration(pointSize: 15, weight: .medium)
+            let config = NSImage.SymbolConfiguration(pointSize: 15 * scale, weight: .medium)
                 .applying(.init(paletteColors: [NSColor(white: 1, alpha: alpha)]))
             if let img = NSImage(systemSymbolName: name, accessibilityDescription: nil)?.withSymbolConfiguration(config) {
                 let s = img.size
                 img.draw(in: NSRect(x: tile.midX - s.width / 2, y: tile.midY - s.height / 2, width: s.width, height: s.height),
                          from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
             } else {
-                drawIcon(.text("?"), in: tile, selected: selected)
+                drawIcon(.text("?"), in: tile, selected: selected, scale: scale)
             }
         case .text(let t):
             let emoji = t.unicodeScalars.contains { $0.properties.isEmojiPresentation }
-            let size: CGFloat = emoji ? 17 : (t.count > 1 ? 12.5 : 15)
+            let size: CGFloat = (emoji ? 17 : (t.count > 1 ? 12.5 : 15)) * scale
             let attrs: [NSAttributedString.Key: Any] = [
                 .font: NSFont.systemFont(ofSize: size, weight: .semibold),
                 .foregroundColor: NSColor(white: 1, alpha: alpha),
@@ -633,7 +647,7 @@ final class SidebarView: FlippedView, NSTextFieldDelegate {
             if line.length > 0 { add("  ", dim) }
             add(Self.shortPath(d), dim)
         }
-        let x = r.minX + 16
+        let x = r.minX + display.textInset
         let maxX = r.maxX - 8
         for port in display.ports ? item.ports : [] {
             if line.length > 0 { add("  ", dim) }
@@ -1020,7 +1034,8 @@ final class SidebarView: FlippedView, NSTextFieldDelegate {
 
     private func openEditor(in r: NSRect, text: String, id: UUID, group: Bool) {
         endEditing(commit: false)
-        let f = NSTextField(frame: NSRect(x: r.minX + (group ? 18 : 12), y: r.midY - 11, width: r.width - 50, height: 22))
+        let f = NSTextField(frame: NSRect(x: r.minX + (group ? 18 : display.textInset - 4), y: r.midY - 11,
+                                          width: r.width - 50 - (group ? 0 : display.textInset - 16), height: 22))
         f.stringValue = text
         f.font = .systemFont(ofSize: 13)
         f.focusRingType = .none
@@ -1065,10 +1080,19 @@ final class SidebarView: FlippedView, NSTextFieldDelegate {
     var renameField: NSTextField? { editor }
 }
 
+/// A scroll view whose scroller is always the thin one that fades out. AppKit resets `scrollerStyle` to the system's
+/// preference (the always-visible kind when a mouse is attached and scroll bars are on Automatic), so it is pinned.
+final class OverlayScrollView: NSScrollView {
+    override var scrollerStyle: NSScroller.Style {
+        get { .overlay }
+        set { super.scrollerStyle = .overlay }
+    }
+}
+
 /// The sidebar card: a `SidebarView` in a scroll view filling the card, so a long list scrolls.
 final class SidebarCardView: CardHostView {
     let sidebar = SidebarView()
-    let scroll = NSScrollView()
+    let scroll = OverlayScrollView()
 
     override init(frame: NSRect) {
         super.init(frame: frame)

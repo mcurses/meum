@@ -289,10 +289,13 @@ final class WidgetSlotCardView: CardHostView {
 /// The built-in Tips widget (setting `showStartHint`, switched in Settings ▸ Widgets or closed with its ×): the
 /// gestures no menu shows, that terminals survive quitting, and where Settings and Help are. Not in the rail.
 final class StartHintView: NSView {
-    /// One tip per page: what it is, and a friendlier line in grey under it.
+    /// One tip per page: what it is, and a friendlier line in grey under it. A new feature someone wouldn't find by
+    /// themselves (a shortcut, a gesture) gets a page here.
     static let tips: [(String, String)] = [
         ("Your terminals keep running when meum quits.",
          "Go ahead, restart meum. Your sessions will be waiting for you."),
+        ("⌘P finds any workspace or tab.",
+         "Type a few letters of its name, folder or Claude session. Return with nothing typed takes you back to where you were."),
         ("Drag a tab onto a card's edge to split it.",
          "Or onto another card to move it there. Double-click the gap between two cards to even them out."),
         ("⌘-click or ⇧-click selects several workspaces.",

@@ -96,6 +96,7 @@ struct SettingsView: View {
                 slider("Sidebar width", "sidebarWidth", 160...480, step: 4, unit: "pt") { $0.sidebarWidth }
             }
             Section("Sidebar") {
+                Toggle("Workspace icons", isOn: plainBool("sidebarShowIcons") { $0.sidebarShowIcons })
                 Toggle("Git branch", isOn: plainBool("sidebarShowBranch") { $0.sidebarShowBranch })
                 Toggle("Folder", isOn: plainBool("sidebarShowDirectory") { $0.sidebarShowDirectory })
                 Toggle("Status entries", isOn: plainBool("sidebarShowStatus") { $0.sidebarShowStatus })

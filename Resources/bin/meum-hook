@@ -5,7 +5,8 @@
 #    "params":{"tab":$MEUM_TAB,"configDir":$CLAUDE_CONFIG_DIR,"payload":<stdin>}}
 #
 # On SessionStart, once meum has taken the event, it also prints two lines Claude Code adds to the session's context: that it runs inside meum and
-# what it can do there (its own tab's labels; the workspace's shared name, icon, colour and labels). Facts only: rules
+# what it can do there (its own tab's labels; the workspace's shared name, icon, colour and labels), plus a line while
+# the workspace has no icon or colour. Facts only: rules
 # about who should change what belong to whatever configures the session, not to meum.
 #
 # Contract: silent otherwise (stdout would be injected into Claude's context for some events), always exit 0,
@@ -32,12 +33,22 @@ case "$CFG" in
   *) CFGJ="\"$CFG\"" ;;
 esac
 
-printf '{"id":1,"method":"agent.hook","oneshot":true,"params":{"tab":"%s","configDir":%s,"payload":%s}}\n' \
-  "$MEUM_TAB" "$CFGJ" "$IN" | "$NC" -U -w 1 "$SOCK" >/dev/null 2>&1 || exit 0
+RESP=$(printf '{"id":1,"method":"agent.hook","oneshot":true,"params":{"tab":"%s","configDir":%s,"payload":%s}}\n' \
+  "$MEUM_TAB" "$CFGJ" "$IN" | "$NC" -U -w 1 "$SOCK" 2>/dev/null) || exit 0
+[ -n "$RESP" ] || exit 0
 # meum answered: a starting session learns where it runs (only then, so a dead socket stays silent)
 case "$IN" in
   *'"hook_event_name":"SessionStart"'* | *'"hook_event_name": "SessionStart"'*)
     echo "You are running in a tab of meum, a terminal workspace app (tab $MEUM_TAB, workspace ${MEUM_WORKSPACE:-?}); \`meum help\` lists what you can do from here."
-    echo "You may put up to four short labels on your own tab saying what you are doing (\`meum tab labels <label>...\`, \`none\` clears them). The workspace's name, icon, colour and labels are shared by every tab in it (\`meum workspace rename|icon|color|labels\`)." ;;
+    echo "You may put up to four short labels on your own tab saying what you are doing (\`meum tab labels <label>...\`, \`none\` clears them). The workspace's name, icon, colour and labels are shared by every tab in it (\`meum workspace rename|icon|color|labels\`)."
+    # what the workspace still lacks, as a fact (the answer's keys are sorted and compact)
+    case "$RESP" in
+      *'"noColor":true'*'"noIcon":true'*)
+        echo "This workspace has no icon and no colour yet: an SF Symbol for what the project is (\`meum workspace icon sf:<name>\`) and a colour distinct from its neighbours in the sidebar (\`meum workspace color ${MEUM_WORKSPACE:-<ws>} <HEX>\`)." ;;
+      *'"noIcon":true'*)
+        echo "This workspace has no icon yet: an SF Symbol for what the project is (\`meum workspace icon sf:<name>\`)." ;;
+      *'"noColor":true'*)
+        echo "This workspace has no colour yet: one distinct from its neighbours in the sidebar (\`meum workspace color ${MEUM_WORKSPACE:-<ws>} <HEX>\`)." ;;
+    esac ;;
 esac
 exit 0

@@ -32,6 +32,7 @@ import MeumCore
 ///   switcher open|close|toggle          Go to Workspace (⌘P); its state is "switcher" in dump-model
 ///   switcher query TEXT                 types TEXT into its field (replacing what is there)
 ///   switcher move N  switcher choose [N]   moves the selection by N rows; goes to the selected (or Nth) row
+///   sidebar-shot FILE                   a PNG of the sidebar's rows on a dark ground (custom drawing only)
 ///   switcher shot FILE                  a PNG of its list (the field and the blur don't draw off screen)
 ///   quit
 @MainActor
@@ -392,6 +393,18 @@ final class DebugControl {
             if args.count == 2, args[0] == "height", let h = Double(args[1]) { settingsWindow.setHeight(h) }
         case "rename-ui":
             controller.renameSelectedWorkspace()
+        case "sidebar-shot":
+            guard let path = args.first else { throw Failure(description: "need FILE") }
+            let v = controller.sidebarCard.sidebar
+            let img = NSImage(size: v.bounds.size)
+            img.lockFocusFlipped(true)
+            NSColor(white: 0.13, alpha: 1).setFill()
+            NSRect(origin: .zero, size: v.bounds.size).fill()
+            v.draw(v.bounds)
+            img.unlockFocus()
+            guard let tiff = img.tiffRepresentation, let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:])
+            else { throw Failure(description: "could not render") }
+            try png.write(to: URL(fileURLWithPath: path))
         case "switcher":
             let sw = controller.switcher
             switch args.first ?? "" {
@@ -504,6 +517,12 @@ final class DebugControl {
             "windowFrame": [controller.window.frame.minX, controller.window.frame.minY,
                             controller.window.frame.width, controller.window.frame.height],
             "keyWindow": controller.window.isKeyWindow,
+            "sidebarScroller": [
+                "style": controller.sidebarCard.scroll.verticalScroller?.scrollerStyle == .overlay ? "overlay" : "legacy",
+                "system": NSScroller.preferredScrollerStyle == .overlay ? "overlay" : "legacy",
+                "width": controller.sidebarCard.scroll.verticalScroller?.frame.width ?? 0,
+                "contentWidth": controller.sidebarCard.scroll.contentView.frame.width,
+            ] as [String: Any],
             "switcher": controller.switcher.debugState,
             "dividers": controller.dividerViews.map { id, v in
                 ["split": id.uuidString, "axis": v.axis.rawValue,

@@ -183,6 +183,13 @@ final class AppControl {
             }
             refreshSessionName(tab: tabID, sessionID: st.sessionID, configDir: st.configDir)
         }
+        // a starting session learns what its workspace still lacks (meum-hook turns these into a hint line)
+        if event == "SessionStart", var r = result.objectValue,
+           let ws = controller.store.state.workspace(containingTab: tabID) {
+            if (ws.icon ?? "").isEmpty { r["noIcon"] = true }
+            if (ws.color ?? "").isEmpty { r["noColor"] = true }
+            return .object(r)
+        }
         return result
     }
 

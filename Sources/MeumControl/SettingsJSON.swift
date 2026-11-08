@@ -12,7 +12,7 @@
 //   reattachSessions bool, resumeClaude bool, sidebarCollapsed bool, checkUpdates bool (daily release check),
 //   showStartHint bool (the one-line hint at the bottom of the window, until closed),
 //   sidebarShowBranch, sidebarShowDirectory, sidebarShowStatus, sidebarShowMetadata, sidebarShowPorts, sidebarShowAgentDots,
-//   sidebarShowShortcuts, sidebarShowPin bool   what a sidebar row shows besides the name
+//   sidebarShowShortcuts, sidebarShowPin, sidebarShowIcons bool   what a sidebar row shows besides the name
 //   widgetOrder [widget id…]   top to bottom within each group (workspace widgets above global ones)
 //   widgetCatalogURL "https://…"   the widget library's catalog.json (null restores the default)
 //   widgetTeamIDs [Team ID…]   Developer ID teams whose signed widgets load without a pinned hash
@@ -57,7 +57,7 @@ public enum SettingsJSON {
     ] + sidebarShowKeys
 
     /// The sidebar row's show/hide switches.
-    public static let sidebarShowKeys: [String] = ["sidebarShowBranch", "sidebarShowDirectory", "sidebarShowStatus", "sidebarShowMetadata", "sidebarShowPorts", "sidebarShowAgentDots", "sidebarShowShortcuts", "sidebarShowPin"]
+    public static let sidebarShowKeys: [String] = ["sidebarShowBranch", "sidebarShowDirectory", "sidebarShowStatus", "sidebarShowMetadata", "sidebarShowPorts", "sidebarShowAgentDots", "sidebarShowShortcuts", "sidebarShowPin", "sidebarShowIcons"]
 
     static let ranges: [String: ClosedRange<Double>] = [
         "cardGap": 0...48, "cornerRadius": 0...32, "sidebarWidth": 160...480, "widgetHeight": 40...800,
@@ -103,6 +103,7 @@ public enum SettingsJSON {
         case "sidebarShowAgentDots": return .bool(s.sidebarShowAgentDots)
         case "sidebarShowShortcuts": return .bool(s.sidebarShowShortcuts)
         case "sidebarShowPin": return .bool(s.sidebarShowPin)
+        case "sidebarShowIcons": return .bool(s.sidebarShowIcons)
         case "statusLinkSchemes": return .array(s.statusLinkSchemes.map { .string($0) })
         case "shortcuts":
             return .object(Dictionary(uniqueKeysWithValues: Shortcuts.actions.map { a in
@@ -221,6 +222,7 @@ public enum SettingsJSON {
         case "sidebarShowAgentDots": s.sidebarShowAgentDots = try bool()
         case "sidebarShowShortcuts": s.sidebarShowShortcuts = try bool()
         case "sidebarShowPin": s.sidebarShowPin = try bool()
+        case "sidebarShowIcons": s.sidebarShowIcons = try bool()
         case "statusLinkSchemes":
             let items = v.isNull ? [] : v.arrayValue?.compactMap(\.stringValue).map { $0.lowercased() }
             guard let items, items.allSatisfy({ StatusLink.isScheme($0) && !StatusLink.alwaysOpen.contains($0) && StatusLink.mayRemember($0) }) else {

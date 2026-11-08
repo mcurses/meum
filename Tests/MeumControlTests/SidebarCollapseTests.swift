@@ -57,7 +57,7 @@ final class SidebarCollapseTests: XCTestCase {
     func testSidebarShowSwitches() throws {
         var s = Settings()
         XCTAssertTrue(s.sidebarShowBranch && s.sidebarShowShortcuts && s.sidebarShowAgentDots && s.sidebarShowStatus && s.sidebarShowPin)
-        XCTAssertFalse(s.sidebarShowDirectory || s.sidebarShowMetadata)
+        XCTAssertFalse(s.sidebarShowDirectory || s.sidebarShowMetadata || s.sidebarShowIcons)
         for k in SettingsJSON.sidebarShowKeys {
             let before = try XCTUnwrap(SettingsJSON.value(s, k)?.boolValue, k)
             try SettingsJSON.set(&s, key: k, value: .bool(!before))

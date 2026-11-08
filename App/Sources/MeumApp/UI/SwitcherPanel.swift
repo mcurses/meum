@@ -9,7 +9,7 @@ final class SwitcherController: NSObject, NSTextFieldDelegate {
     private var panel: SwitcherPanel?
     private let field = NSTextField()
     private let list = SwitcherListView()
-    private let scroll = NSScrollView()
+    private let scroll = OverlayScrollView()
     private(set) var hits: [WorkspaceSearch.Hit] = []
     private(set) var selected = 0
     /// Workspaces most recently left first (kept in memory only).
