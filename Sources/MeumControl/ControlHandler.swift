@@ -40,7 +40,7 @@ public enum MeumMethod {
     public static let workspaceSetIcon = "workspace.setIcon"
     /// `{id, labels: [string]}`: chips on the workspace's sidebar row (at most 4, 24 characters each; empty clears).
     public static let workspaceSetLabels = "workspace.setLabels"
-    /// `{id, key, value | null}` sets or removes one label; `{id, metadata: {key: value | null}}` several.
+    /// `{id, key, value | null}` sets or removes one label; `{id, metadata: {key: value | null}}` several. Frozen since 0.5.5: kept as is, not grown.
     public static let workspaceSetMeta = "workspace.setMeta"
     /// `{collapsed?}`: collapses or expands the sidebar (without `collapsed`: toggles). -> `{collapsed}`.
     public static let sidebarSetCollapsed = "sidebar.setCollapsed"
@@ -70,8 +70,6 @@ public enum MeumMethod {
     public static let tabSelect = "tab.select"
     /// `{tab}`: closes the tab and ends its terminal.
     public static let tabClose = "tab.close"
-    /// `{tab, text}`: typed into the tab's terminal as keystrokes; a newline submits.
-    public static let tabSendText = "tab.sendText"
     /// `{}` -> `{workspace, tab, widget, name, labels}`: the selected workspace's id and its focused tab (a terminal or a
     /// widget tab; `widget` is the widget id, null for a terminal); `name` is the Claude Code session's own name, null
     /// without one; `labels` the labels that session set on its tab (`tab.setLabels`, empty without).
@@ -90,7 +88,7 @@ public enum MeumMethod {
     public static let tabMove = "tab.move"
     /// `{split, ratio}` -> `{split, ratio}`: the split's first share, 0.1…0.9 (clamped).
     public static let splitResize = "split.resize"
-    /// `{key?}` -> `{settings, path}` or `{key, value}`. Keys and ranges: SettingsJSON.swift.
+    /// `{key?}` -> `{settings, path}` or `{key, value}`. Keys and ranges: SettingsJSON.swift. The look's tuning keys (cardGap, cornerRadius, liquidStyle, focusFrameSaturation, focusFrameOpacity, glassBlur, glassTint, solidColor, background) and the sidebar's sidebarShowMetadata and sidebarShowIcons are frozen since 0.5.5: kept, and no new tuning key is added. boardOpenFolders and boardOpenSuffixes (what a meum://open link may open) are readable here and refused by settings.set.
     public static let settingsGet = "settings.get"
     /// `{key, value}` -> `{key, value}` (the stored value); publishes `settings.changed`. The widget trust keys are read-only here (`forbidden`).
     public static let settingsSet = "settings.set"
@@ -120,13 +118,17 @@ public enum MeumMethod {
     public static let widgetRemove = "widget.remove"
     /// `{id}` -> always `forbidden`: trusting a widget is done in Settings ▸ Widgets only (meum opens it there).
     public static let widgetAllow = "widget.allow"
+    /// `{path}` -> `{state: "offered"|"installed"|"refused", id?, team?, reason?}`. Another program offers a signed
+    /// `.meumwidget` folder; meum checks it and asks the person with a card under the sidebar, and installs it itself
+    /// on their Install. Nothing is copied or trusted by the call. The outcome shows later in `widget.list`.
+    public static let widgetOffer = "widget.offer"
     /// Methods that wait for the network: answered off the request queue.
     public static let widgetAsync: Set<String> = [widgetCatalog, widgetInstall, widgetUpdate]
     /// `{}` -> `{current, available, latest?, url?, page?, canUpdate, reason?}`. Asks GitHub (async).
     public static let updateCheck = "app.update.check"
     /// `{relaunch?}` -> as check, after installing; then meum restarts (unless relaunch is false). Async.
     public static let updateInstall = "app.update.install"
-    /// `{tab, configDir?, payload}`: one Claude Code hook event, as `meum-hook` sends it; drives the agent dots.
+    /// `{tab, tty?, configDir?, projectDir?, payload}`: one Claude Code hook event, as `meum-hook` sends it; drives the agent dots. `projectDir` is the folder the session was started in, where a resume after a reboot starts it again. `tty` is the terminal the hook ran on; when it isn't the tab's own (the pty of its zmx session) the answer is `{outcome: "foreign"}` and nothing is recorded.
     public static let agentHook = "agent.hook"
     /// `{after?, types?}`: turns the connection into a stream of `{seq, type, data}` lines (types: docs/api.md). `after` resumes from a seq while the ring buffer still holds it; `types` filters by pattern (`tab.*`).
     public static let eventsSubscribe = "events.subscribe"
@@ -139,9 +141,9 @@ public enum MeumMethod {
         tree, workspaceList, workspaceNew, workspaceSelect, workspaceRename, workspaceClose, workspaceReorder,
         workspaceSetColor, workspaceSetIcon, workspaceSetLabels, workspaceSetMeta, workspacePin, workspaceSetGroup,
         groupList, groupNew, groupRename, groupSetCollapsed, groupUngroup, workspaceMarkRead, workspaceMarkUnread, sidebarSetCollapsed,
-        tabNew, tabSelect, tabClose, tabSendText, tabFocused, tabSetLabels, tabPaste, tabMove, splitResize, settingsGet, settingsSet, statusSet, statusClear, notify, agentHook,
+        tabNew, tabSelect, tabClose, tabFocused, tabSetLabels, tabPaste, tabMove, splitResize, settingsGet, settingsSet, statusSet, statusClear, notify, agentHook,
         widgetList, widgetReload, widgetEnable, widgetSend, widgetScreenshot,
-        widgetCatalog, widgetInstall, widgetUpdate, widgetRemove, widgetAllow, updateCheck, updateInstall,
+        widgetCatalog, widgetInstall, widgetUpdate, widgetRemove, widgetAllow, widgetOffer, updateCheck, updateInstall,
     ]
 }
 

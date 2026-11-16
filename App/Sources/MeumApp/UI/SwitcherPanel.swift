@@ -117,20 +117,6 @@ final class SwitcherController: NSObject, NSTextFieldDelegate {
         ]
     }
 
-    /// The list as a PNG on a dark ground (the blur and the text field draw nothing off screen).
-    func snapshot() throws -> Data {
-        let size = scroll.frame.size
-        let img = NSImage(size: size)
-        img.lockFocusFlipped(true)
-        NSColor(white: 0.13, alpha: 1).setFill()
-        NSRect(origin: .zero, size: size).fill()
-        list.draw(NSRect(origin: .zero, size: size))
-        img.unlockFocus()
-        guard let tiff = img.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff),
-              let png = rep.representation(using: .png, properties: [:]) else { throw CocoaError(.fileWriteUnknown) }
-        return png
-    }
-
     // MARK: building
 
     private func build() {

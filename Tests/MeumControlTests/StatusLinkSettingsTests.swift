@@ -17,6 +17,20 @@ final class StatusLinkSettingsTests: XCTestCase {
     }
 }
 
+final class LinkEditorSettingsTests: XCTestCase {
+    func testATerminalAppIsRefusedAsLinkEditor() throws {
+        var s = Settings()
+        try SettingsJSON.set(&s, key: "linkEditor", value: .string("com.example.Editor"))
+        XCTAssertEqual(s.linkEditor, "com.example.Editor")
+        for id in ["com.apple.Terminal", "com.googlecode.iterm2", "io.github.mcurses.meum"] {
+            XCTAssertThrowsError(try SettingsJSON.set(&s, key: "linkEditor", value: .string(id)), id)
+        }
+        XCTAssertEqual(s.linkEditor, "com.example.Editor")
+        try SettingsJSON.set(&s, key: "linkEditor", value: .null)
+        XCTAssertNil(s.linkEditor)
+    }
+}
+
 final class MCPStaleNoteTests: XCTestCase {
     func testNotesAnUpdatedAppOnly() {
         XCTAssertNil(MCPServer.staleNote(running: "0.5.2", mine: "0.5.2"))

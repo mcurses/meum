@@ -69,7 +69,7 @@ public enum CLI {
       tab focus --claude-id ID                the tab running that Claude Code session, its workspace shown and
                                               meum in front (the whole session id or a unique prefix; `meum tree`
                                               shows the ids). Other apps: the link meum://focus?claude=ID
-      tab send [--enter] <tab> <text|->       type text into a tab ('-' reads stdin)
+                                              (meum://open?path=/abs/file opens a file under a folder allowed in Settings)
       tab paste [--submit] <tab> <text|->     paste text into a tab's terminal (bracketed paste; works in
                                               hidden workspaces); --submit presses Return after it
       tab focused                             the selected workspace's focused tab
@@ -100,6 +100,8 @@ public enum CLI {
       widget install|update <id>              install a widget from the library (or its newer version)
       widget remove <id> [--data]             remove a widget (--data: also its data folder)
       widget allow <id>                       gone: trust a widget with Allow in Settings ▸ Widgets
+      widget offer <folder.meumwidget>        offer a signed widget: meum asks the person with a card under the
+                                              sidebar and installs it on their Install (for tools that ship one)
       widget send <tab> <json>                send a widget tab a message and print its reply
                                               (--widget ID instead of a tab: a sidebar widget)
       widget screenshot <tab> [--out FILE]    a PNG of a widget tab (default FILE: widget-<tab>.png)
@@ -551,13 +553,6 @@ public enum CLI {
             try p.expectPositionals(["tab"], command: "meum tab \(sub)")
             let id = try resolveTab(ctx, p.positionals[0])
             printOK(ctx, try ctx.rpc(sub == "select" ? MeumMethod.tabSelect : MeumMethod.tabClose, ["tab": .string(id)]))
-        case "send":
-            let p = try parse(&ctx, rest, bools: ["enter"])
-            try p.expectPositionals(["tab", "text"], command: "meum tab send [--enter]")
-            let id = try resolveTab(ctx, p.positionals[0])
-            var text = p.positionals[1] == "-" ? ctx.env.readStdin() : p.positionals[1]
-            if p.has("enter") { text += "\r" }
-            printOK(ctx, try ctx.rpc(MeumMethod.tabSendText, ["tab": .string(id), "text": .string(text)]))
         case "paste":
             let p = try parse(&ctx, rest, bools: ["submit"])
             try p.expectPositionals(["tab", "text"], command: "meum tab paste [--submit]")
@@ -719,6 +714,19 @@ public enum CLI {
             guard p.positionals.count == 1 else { throw CLIError.usage("meum widget remove <id> [--data]") }
             ctx.show(try ctx.rpc(MeumMethod.widgetRemove, ["id": .string(p.positionals[0]), "data": .bool(p.has("data"))]),
                      human: human)
+        case "offer":
+            guard p.positionals.count == 1 else { throw CLIError.usage("meum widget offer <folder.meumwidget>") }
+            let raw = p.positionals[0]
+            let path = raw.hasPrefix("/") ? raw : FileManager.default.currentDirectoryPath + "/" + raw
+            let r = try ctx.rpc(MeumMethod.widgetOffer, ["path": .string(URL(fileURLWithPath: path).standardizedFileURL.path)])
+            if r["state"]?.stringValue == "refused", !ctx.json {
+                throw CLIError.failure("refused: \(r["reason"]?.stringValue ?? "?")")
+            }
+            ctx.show(r) { r in
+                r["state"]?.stringValue == "installed"
+                    ? "\(r["id"]?.stringValue ?? "?") is installed already, the same build"
+                    : "offered \(r["id"]?.stringValue ?? "?") (signed by \(r["team"]?.stringValue ?? "?")): meum asks the person under the sidebar"
+            }
         case "order":
             _ = try ctx.rpc(MeumMethod.settingsSet, ["key": "widgetOrder", "value": .array(p.positionals.map { .string($0) })])
             ctx.show(try ctx.rpc(MeumMethod.widgetList), human: human)

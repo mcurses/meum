@@ -1,0 +1,125 @@
+{
+  "fill-specializations": [
+    {
+      "value": {
+        "solid": "srgb:0.34118,0.44706,0.73333,1.00000"
+      }
+    },
+    {
+      "appearance": "dark",
+      "value": {
+        "solid": "srgb:0.14510,0.14118,0.14510,1.00000"
+      }
+    }
+  ],
+  "groups": [
+    {
+      "name": "Marks",
+      "layers": [
+        {
+          "name": "marks",
+          "image-name-specializations": [
+            {
+              "value": "marks-light.png"
+            },
+            {
+              "appearance": "dark",
+              "value": "marks-dark.png"
+            },
+            {
+              "appearance": "tinted",
+              "value": "marks-mono.png"
+            }
+          ],
+          "glass-specializations": [
+            {
+              "value": false
+            },
+            {
+              "appearance": "tinted",
+              "value": true
+            }
+          ]
+        }
+      ],
+      "shadow-specializations": [
+        {
+          "value": {
+            "kind": "neutral",
+            "opacity": 0.35
+          }
+        },
+        {
+          "appearance": "dark",
+          "value": {
+            "kind": "neutral",
+            "opacity": 0.6
+          }
+        },
+        {
+          "appearance": "tinted",
+          "value": {
+            "kind": "neutral",
+            "opacity": 0.5
+          }
+        }
+      ],
+      "specular-specializations": [
+        {
+          "value": false
+        },
+        {
+          "appearance": "tinted",
+          "value": true
+        }
+      ],
+      "translucency": {
+        "enabled": false,
+        "value": 0.5
+      },
+      "lighting": "individual"
+    },
+    {
+      "name": "Paper",
+      "layers": [
+        {
+          "name": "paper",
+          "image-name-specializations": [
+            {
+              "value": "paper-light.png"
+            },
+            {
+              "appearance": "dark",
+              "value": "paper-dark.png"
+            }
+          ],
+          "glass": false,
+          "hidden-specializations": [
+            {
+              "value": false
+            },
+            {
+              "appearance": "tinted",
+              "value": true
+            }
+          ]
+        }
+      ],
+      "shadow": {
+        "kind": "none",
+        "opacity": 0
+      },
+      "specular": false,
+      "translucency": {
+        "enabled": false,
+        "value": 0.5
+      },
+      "lighting": "combined"
+    }
+  ],
+  "supported-platforms": {
+    "squares": [
+      "macOS"
+    ]
+  }
+}

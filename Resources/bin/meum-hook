@@ -2,7 +2,7 @@
 # meum-hook: forwards a Claude Code hook (JSON on stdin) to the meum control socket as an agent.hook request.
 #
 #   {"id":1,"method":"agent.hook","oneshot":true,
-#    "params":{"tab":$MEUM_TAB,"configDir":$CLAUDE_CONFIG_DIR,"payload":<stdin>}}
+#    "params":{"tab":$MEUM_TAB,"tty":<its terminal>,"configDir":$CLAUDE_CONFIG_DIR,"projectDir":$CLAUDE_PROJECT_DIR,"payload":<stdin>}}
 #
 # On SessionStart, once meum has taken the event, it also prints two lines Claude Code adds to the session's context: that it runs inside meum and
 # what it can do there (its own tab's labels; the workspace's shared name, icon, colour and labels), plus a line while
@@ -33,9 +33,28 @@ case "$CFG" in
   *) CFGJ="\"$CFG\"" ;;
 esac
 
-RESP=$(printf '{"id":1,"method":"agent.hook","oneshot":true,"params":{"tab":"%s","configDir":%s,"payload":%s}}\n' \
-  "$MEUM_TAB" "$CFGJ" "$IN" | "$NC" -U -w 1 "$SOCK" 2>/dev/null) || exit 0
+# The folder the session was started in (Claude Code sets it for hooks); meum resumes the session there.
+PRJ=${CLAUDE_PROJECT_DIR:-}
+case "$PRJ" in
+  '' | *\"* | *\\*) PRJJ=null ;;
+  *) PRJJ="\"$PRJ\"" ;;
+esac
+
+# The terminal this hook runs on: the first of its ancestors (claude, normally the parent) that has one. meum takes
+# the hook only when that is the tab's own terminal, so a session elsewhere that inherited MEUM_TAB (a background
+# session's daemon started from a tab passes it on) is not taken for the tab's.
+TTY=; P=$PPID; i=0
+while [ "$i" -lt 8 ] && [ "${P:-0}" -gt 1 ]; do
+  set -- $(ps -o tty= -o ppid= -p "$P" 2>/dev/null)
+  case "${1:-}" in ''|'??'|'?') P=${2:-0} ;; *) TTY=$1; break ;; esac
+  i=$((i + 1))
+done
+case "$TTY" in *[!A-Za-z0-9]*) TTY= ;; esac
+
+RESP=$(printf '{"id":1,"method":"agent.hook","oneshot":true,"params":{"tab":"%s","tty":"%s","configDir":%s,"projectDir":%s,"payload":%s}}\n' \
+  "$MEUM_TAB" "$TTY" "$CFGJ" "$PRJJ" "$IN" | "$NC" -U -w 1 "$SOCK" 2>/dev/null) || exit 0
 [ -n "$RESP" ] || exit 0
+case "$RESP" in *'"foreign"'*) exit 0 ;; esac   # not the tab's terminal: silent
 # meum answered: a starting session learns where it runs (only then, so a dead socket stays silent)
 case "$IN" in
   *'"hook_event_name":"SessionStart"'* | *'"hook_event_name": "SessionStart"'*)

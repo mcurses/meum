@@ -14,17 +14,20 @@ public struct AgentState: Codable, Equatable, Sendable {
     public var configDir: String?
     public var transcriptPath: String?
     public var cwd: String?
+    /// `$CLAUDE_PROJECT_DIR` of the session's hooks: the folder it was started in.
+    public var projectDir: String?
     public var phase: AgentPhase
     public var unread: Bool
     /// Seconds since 1970 of the last event applied (including duplicates-free refreshes).
     public var updatedAt: TimeInterval
 
     public init(sessionID: String, configDir: String? = nil, transcriptPath: String? = nil, cwd: String? = nil,
-                phase: AgentPhase = .idle, unread: Bool = false, updatedAt: TimeInterval = 0) {
+                phase: AgentPhase = .idle, unread: Bool = false, updatedAt: TimeInterval = 0, projectDir: String? = nil) {
         self.sessionID = sessionID
         self.configDir = configDir
         self.transcriptPath = transcriptPath
         self.cwd = cwd
+        self.projectDir = projectDir
         self.phase = phase
         self.unread = unread
         self.updatedAt = updatedAt
@@ -97,7 +100,7 @@ public struct AgentTracker: Equatable, Sendable {
     /// Applies one hook event for a tab. `configDir` is `$CLAUDE_CONFIG_DIR` from the hook environment
     /// (nil or "" for the default `~/.claude`). `payload` is the hook JSON from stdin.
     @discardableResult
-    public mutating func apply(tab: String, configDir: String?, payload: JSON, at now: Date) -> AgentOutcome {
+    public mutating func apply(tab: String, configDir: String?, projectDir: String? = nil, payload: JSON, at now: Date) -> AgentOutcome {
         let t = now.timeIntervalSince1970
         guard case .object = payload, let event = payload["hook_event_name"]?.stringValue else { return .ignored }
 
@@ -114,12 +117,12 @@ public struct AgentTracker: Equatable, Sendable {
             guard let sid, !sid.isEmpty else { return .ignored }
             // Overwrite: resume keeps the id, fork/clear give a new one.
             var s = AgentState(sessionID: sid, phase: .idle, unread: false, updatedAt: t)
-            fill(&s, payload: payload, envConfigDir: configDir)
+            fill(&s, payload: payload, envConfigDir: configDir, projectDir: projectDir)
             return commit(tab, old: old, new: s)
 
         case "UserPromptSubmit", "Stop":
             guard let sid, !sid.isEmpty else { return .ignored }
-            var s = upsert(old, sid: sid, payload: payload, envConfigDir: configDir, at: t)
+            var s = upsert(old, sid: sid, payload: payload, envConfigDir: configDir, projectDir: projectDir, at: t)
             if event == "UserPromptSubmit" {
                 s.phase = .running
                 s.unread = false
@@ -133,7 +136,7 @@ public struct AgentTracker: Equatable, Sendable {
             guard let kind = payload["notification_type"]?.stringValue,
                   Self.notificationTypesNeedingInput.contains(kind),
                   let sid, !sid.isEmpty else { return .ignored }
-            var s = upsert(old, sid: sid, payload: payload, envConfigDir: configDir, at: t)
+            var s = upsert(old, sid: sid, payload: payload, envConfigDir: configDir, projectDir: projectDir, at: t)
             s.phase = .needsInput
             s.unread = true
             return commit(tab, old: old, new: s)
@@ -150,17 +153,18 @@ public struct AgentTracker: Equatable, Sendable {
         }
     }
 
-    private func upsert(_ old: AgentState?, sid: String, payload: JSON, envConfigDir: String?, at t: TimeInterval) -> AgentState {
+    private func upsert(_ old: AgentState?, sid: String, payload: JSON, envConfigDir: String?, projectDir: String?, at t: TimeInterval) -> AgentState {
         var s = old ?? AgentState(sessionID: sid)
         if old?.sessionID != sid { s = AgentState(sessionID: sid); s.configDir = old?.configDir }
         s.updatedAt = t
-        fill(&s, payload: payload, envConfigDir: envConfigDir)
+        fill(&s, payload: payload, envConfigDir: envConfigDir, projectDir: projectDir)
         return s
     }
 
-    private func fill(_ s: inout AgentState, payload: JSON, envConfigDir: String?) {
+    private func fill(_ s: inout AgentState, payload: JSON, envConfigDir: String?, projectDir: String?) {
         if let p = payload["transcript_path"]?.stringValue, !p.isEmpty { s.transcriptPath = p }
         if let c = payload["cwd"]?.stringValue, !c.isEmpty { s.cwd = c }
+        if let d = projectDir, !d.isEmpty { s.projectDir = d }
         if let e = envConfigDir, !e.isEmpty {
             s.configDir = e
         } else if let p = s.transcriptPath, let d = Self.configDir(fromTranscript: p) {
@@ -224,6 +228,19 @@ public struct AgentTracker: Equatable, Sendable {
         guard agents[tab] == nil else { return nil }
         agents[tab] = state
         return state
+    }
+
+    /// A resumed session that has sent no hook for a while is most likely stopped at a question Claude Code asks
+    /// before it starts (hooks run only after it): the tab shows "waiting for you". Its next hook replaces this.
+    @discardableResult
+    public mutating func markWaiting(tab: String, sessionID: String, at now: Date = Date()) -> AgentState? {
+        var s = agents[tab] ?? AgentState(sessionID: sessionID)
+        guard s.phase != .needsInput else { return nil }
+        s.phase = .needsInput
+        s.unread = (tab != focusedTab)
+        s.updatedAt = now.timeIntervalSince1970
+        agents[tab] = s
+        return s
     }
 
     public mutating func forget(tab: String) -> AgentState? {

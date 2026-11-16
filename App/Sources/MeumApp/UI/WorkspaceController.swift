@@ -21,6 +21,9 @@ final class WorkspaceController: NSObject, SidebarHost {
     private(set) var widgetCards: [WidgetSlotCardView] = []
     /// The built-in Tips widget: first in the widget stack while `showStartHint` is on.
     let tipsCard = WidgetSlotCardView(frame: NSRect(x: 0, y: 0, width: 240, height: 120))
+    /// Widgets other programs offered (`widget.offer`): first under the sidebar while there is one.
+    let offerCard = WidgetSlotCardView(frame: NSRect(x: 0, y: 0, width: 240, height: 120))
+    let offerView = OfferView(frame: .zero)
     private(set) var cardViews: [UUID: TerminalCardView] = [:]
     private(set) var shownWorkspaceID: UUID?
     private let emptyHint = NSTextField(labelWithString: "")
@@ -53,13 +56,20 @@ final class WorkspaceController: NSObject, SidebarHost {
     /// A widget card's height; nil when the widget hid it (`setPreferredHeight(0)`).
     func widgetHeight(_ card: WidgetSlotCardView) -> CGFloat? {
         if card.requestedHeight() == 0 { return nil }
-        if card === tipsCard { return card.requestedHeight() }
+        if card === tipsCard || card === offerCard { return card.requestedHeight() }
         return settings.widgetHeightAuto ? (card.preferredHeight ?? 150) : CGFloat(settings.widgetHeight)
+    }
+
+    /// Shows the offered widgets (none hides the card).
+    func showOffers(_ items: [OfferView.Item]) {
+        guard items != offerView.items else { return }
+        offerView.show(items)
+        reconcile(animate: true)
     }
 
     /// Replaces the widget cards (after a widget reload or reorder).
     func setWidgetCards(_ installed: [WidgetSlotCardView]) {
-        let cards = [tipsCard] + installed
+        let cards = [offerCard, tipsCard] + installed
         for v in widgetCards where !cards.contains(where: { $0 === v }) {
             v.removeFromSuperview()
             currentFrames[ObjectIdentifier(v)] = nil
@@ -80,9 +90,13 @@ final class WorkspaceController: NSObject, SidebarHost {
 
     /// Tells the control layer a status entry was clicked (it publishes `status.clicked`).
     var onStatusClicked: ((UUID, String, StatusEntry) -> Void)?
-    /// Opens a status entry's link. A debug instance records it instead (`openedURLs`), so tests open nothing.
-    var openURL: (URL) -> Void = { NSWorkspace.shared.open($0) }
+    /// Tells the control layer a tab's Claude session was started again with `--resume` (tab, session id).
+    var onResumed: ((UUID, String) -> Void)?
+    /// Opens a link (a status entry's, a terminal's). A debug instance records it instead (`openedURLs`), so tests
+    /// open nothing.
+    var openURL: (URL) -> Void = { InstalledAppOpen.open($0) }
     private var widgetClickMonitor: Any?
+    private var modifierMonitor: Any?
     /// The widget host, told when the selected workspace changes.
     weak var widgets: WidgetManager?
     /// Called after every reconcile (the debug interface uses it to log).
@@ -125,7 +139,14 @@ final class WorkspaceController: NSObject, SidebarHost {
         }
         tipsCard.glass.reloadWallpaper()
         root.addSubview(tipsCard, positioned: .above, relativeTo: sidebarCard)
-        widgetCards = [tipsCard]
+        offerCard.host(offerView)
+        offerCard.requestedHeight = { [weak self] in
+            guard let self, !self.settings.sidebarCollapsed else { return 0 }
+            return self.offerView.height(forWidth: self.sidebarWidth)
+        }
+        offerCard.glass.reloadWallpaper()
+        root.addSubview(offerCard, positioned: .above, relativeTo: sidebarCard)
+        widgetCards = [offerCard, tipsCard]
         // below every card: where a card reaches into the top gap (a small gap setting), the card gets the click
         root.addSubview(dragStrip, positioned: .below, relativeTo: nil)
         dropOverlay.frame = root.bounds
@@ -173,11 +194,16 @@ final class WorkspaceController: NSObject, SidebarHost {
 
     func start() {
         watchWidgetClicks()
+        watchModifierKeys()
         if store.state.workspaces.isEmpty {
             store.mutate(.structure(animate: false)) { $0.addWorkspace(.make(name: "Workspace 1", cwd: NSHomeDirectory())) }
         }
         if background { window.orderBack(nil) } else { window.makeKeyAndOrderFront(nil) }
         reconcile(animate: false)
+        // the shown workspace's tabs have started theirs; the rest follow once launch has settled
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+            MainActor.assumeIsolated { self?.resumeHiddenAgents() }
+        }
     }
 
     private var wallpaperWork: DispatchWorkItem?
@@ -437,14 +463,18 @@ final class WorkspaceController: NSObject, SidebarHost {
         return v
     }
 
-    private func makeSurface(tab: Tab, workspace ws: Workspace, live: Set<String>) -> SurfaceView {
-        var cwd = tab.cwd ?? ws.cwd ?? NSHomeDirectory()
+    /// The folder a tab's shell starts in: its own, else the workspace's, else home.
+    private func startDirectory(tab: Tab, workspace ws: Workspace) -> String {
+        let cwd = tab.cwd ?? ws.cwd ?? NSHomeDirectory()
         var isDir: ObjCBool = false
         if !FileManager.default.fileExists(atPath: cwd, isDirectory: &isDir) || !isDir.boolValue {
-            cwd = NSHomeDirectory()
+            return NSHomeDirectory()
         }
-        let (command, resumed) = sessions.command(for: tab, live: live)
-        if resumed { Log.info("tab \(tab.id): session gone, resuming agent \(tab.agent?.sessionID ?? "?")") }
+        return cwd
+    }
+
+    /// The environment a tab's session starts with: meum's socket and ids, and its own CLI first on PATH.
+    private func sessionEnvironment(tab: Tab, workspace ws: Workspace) -> [String: String] {
         var env = [
             "\(Product.envPrefix)SOCKET": paths.socket.path,
             "\(Product.envPrefix)WORKSPACE": ws.id.uuidString,
@@ -457,8 +487,51 @@ final class WorkspaceController: NSObject, SidebarHost {
             // the Claude Code plugin starts `$MEUM_CLI mcp`: this meum's own CLI, wherever the app lives
             env["\(Product.envPrefix)CLI"] = bin + "/meum"
         }
+        return env
+    }
+
+    /// Starts the saved Claude sessions of the workspaces not on screen, one every `interval` seconds, so after a
+    /// reboot every session comes back shortly after launch, not only when its workspace is first shown. Each runs
+    /// in its tab's zmx session as the tab would start it; showing the workspace later attaches to it.
+    func resumeHiddenAgents(interval: TimeInterval = 1.2) {
+        let live = sessions.list()
+        var queue = store.state.workspaces.flatMap { ws in
+            ws.allTabs.filter { $0.agent != nil && !$0.isWidget && !live.contains(sessions.name(for: $0.id)) }.map(\.id)
+        }
+        guard !queue.isEmpty else { return }
+        Log.info("resume: \(queue.count) saved Claude session(s) to start in the background")
+        func step() {
+            guard !queue.isEmpty else { return }
+            let id = queue.removeFirst()
+            // the workspace may have been shown meanwhile (its tabs started themselves) or the tab closed
+            if let ws = store.state.workspace(containingTab: id), let tab = ws.allTabs.first(where: { $0.id == id }),
+               ws.id != shownWorkspaceID, parkedCards[ws.id] == nil,
+               !sessions.list().contains(sessions.name(for: id)),
+               let args = sessions.backgroundStart(for: tab) {
+                sessions.run(args, env: sessionEnvironment(tab: tab, workspace: ws), cwd: startDirectory(tab: tab, workspace: ws))
+                if let sid = tab.agent?.sessionID {
+                    Log.info("tab \(id): session gone, resuming agent \(sid) in the background")
+                    onResumed?(id, sid)
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + interval) { MainActor.assumeIsolated { step() } }
+            } else {
+                step()
+            }
+        }
+        step()
+    }
+
+    private func makeSurface(tab: Tab, workspace ws: Workspace, live: Set<String>) -> SurfaceView {
+        let cwd = startDirectory(tab: tab, workspace: ws)
+        let (command, resumed) = sessions.command(for: tab, live: live)
+        if resumed, let sid = tab.agent?.sessionID {
+            Log.info("tab \(tab.id): session gone, resuming agent \(sid)")
+            onResumed?(tab.id, sid)
+        }
+        let env = sessionEnvironment(tab: tab, workspace: ws)
         let s = SurfaceView(tabID: tab.id, workingDirectory: cwd, command: command, env: env)
         s.onFocus = { [weak self] s in self?.surfaceFocused(s) }
+        s.linkHost = self
         s.onExit = { [weak self] s in self?.surfaceExited(s) }
         s.onTitle = { [weak self] s, title in
             self?.store.mutate(.cosmetic, save: false) { $0.updateTab(s.tabID) { $0.title = title } }
@@ -666,6 +739,21 @@ final class WorkspaceController: NSObject, SidebarHost {
             return e
         }
     }
+
+    /// ⌘ held over a terminal the keyboard is not in underlines its links too (see `modifiersChangedElsewhere`).
+    func watchModifierKeys() {
+        modifierMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] e in
+            guard let self, e.window === self.window, let content = self.window.contentView else { return e }
+            let p = content.convert(self.window.mouseLocationOutsideOfEventStream, from: nil)
+            if let s = content.hitTest(p) as? SurfaceView, self.window.firstResponder !== s {
+                s.modifiersChangedElsewhere(e)
+            }
+            return e
+        }
+    }
+
+    /// Terminal ▸ Open Link…: letters on the focused terminal's links. False when it shows none.
+    func showLinkHints() -> Bool { focusedSurface?.showLinkHints() ?? false }
 
     var focusedSurface: SurfaceView? {
         guard let ws = selectedWorkspace, let card = ws.focusedCard else { return nil }

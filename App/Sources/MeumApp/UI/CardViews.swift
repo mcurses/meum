@@ -302,6 +302,8 @@ final class StartHintView: NSView {
          "Then right-click to put them in a group. A group folds away with a click on its name."),
         ("The dots tell you what Claude is up to.",
          "Orange waits for you, blue is done and unread, green is working, grey is idle. ⌘J jumps to the next session waiting for you."),
+        ("⌘-click a link, path or folder in a terminal.",
+         "It opens at the right line in your editor; ⇧⌘-click does the other thing, and ⇧⌘O puts a letter on every link on screen."),
         ("Make it yours with ⌘,",
          "Fonts, colour themes, glass, the sidebar, widgets and every shortcut."),
         ("There's more in the Help menu.",

@@ -8,6 +8,9 @@ public struct AgentSnapshot: Codable, Equatable, Sendable {
     public var configDir: String?
     public var transcriptPath: String?
     public var cwd: String?
+    /// The folder the session was started in (`$CLAUDE_PROJECT_DIR` in its hooks): where it resumes. `cwd` follows
+    /// the agent's last `cd`.
+    public var projectDir: String?
     /// The session's name from Claude Code's own record of it (`<configDir>/sessions/<pid>.json`), e.g. `meum-05`.
     public var name: String?
     /// Short labels the agent attached to its session (`tab.setLabels`): shown as chips on its tab and workspace
@@ -15,11 +18,12 @@ public struct AgentSnapshot: Codable, Equatable, Sendable {
     public var labels: [String]?
 
     public init(sessionID: String, configDir: String? = nil, transcriptPath: String? = nil, cwd: String? = nil,
-                name: String? = nil, labels: [String]? = nil) {
+                name: String? = nil, labels: [String]? = nil, projectDir: String? = nil) {
         self.sessionID = sessionID
         self.configDir = configDir
         self.transcriptPath = transcriptPath
         self.cwd = cwd
+        self.projectDir = projectDir
         self.name = name
         self.labels = labels
     }

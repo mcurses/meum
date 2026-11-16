@@ -22,6 +22,8 @@ import MeumCore
 ///   key KEYCODE                         a plain key press through the event queue (53: Escape)
 ///   chord COMBO [KEYCODE]               a key chord ("shift+cmd+r") through NSApp.sendEvent: local monitors, menu
 ///                                       key equivalents, then the key window (KEYCODE default: US layout)
+///   offer ID yes|no                     Install or No on the card of an offered widget
+///   setup home DIR|show|yes|no|dump FILE  the first-launch sheet, wiring DIR's Claude config (never the real home)
 ///   record-shortcut ID                  Settings ▸ Shortcuts starts recording for action ID (the window must be open)
 ///   menu TITLE                          performs the menu item with that title (exercises the key bindings)
 ///   new-workspace [NAME]  select INDEX  rename INDEX NAME  move FROM TO  close-workspace INDEX
@@ -29,11 +31,10 @@ import MeumCore
 ///   agent TAB|focused running|idle|needsInput|end [unread]   feeds a synthetic Claude hook to the agent tracker
 ///   snapshot TAB|focused SESSIONID      stores an AgentSnapshot on the tab (for the resume path)
 ///   rename-ui                           opens the sidebar's inline rename for the selected workspace
-///   switcher open|close|toggle          Go to Workspace (⌘P); its state is "switcher" in dump-model
-///   switcher query TEXT                 types TEXT into its field (replacing what is there)
-///   switcher move N  switcher choose [N]   moves the selection by N rows; goes to the selected (or Nth) row
-///   sidebar-shot FILE                   a PNG of the sidebar's rows on a dark ground (custom drawing only)
-///   switcher shot FILE                  a PNG of its list (the field and the blur don't draw off screen)
+///   switcher toggle|close  switcher query TEXT   Go to Workspace (⌘P), TEXT typed into its field; its state is
+///                                       "switcher" in dump-model (ranking: WorkspaceSearchTests)
+///   shot sidebar|setup FILE             a PNG of the sidebar's rows (custom drawing only, on a dark ground) or of the
+///                                       shown first-launch sheet
 ///   quit
 @MainActor
 final class DebugControl {
@@ -43,6 +44,8 @@ final class DebugControl {
     /// Set by the app delegate.
     var settingsWindow: SettingsWindowController?
     var help: HelpWindowController?
+    var setup: SetupSheetController?
+    var setupWindow: NSWindow?
     /// Links a status click would have opened (the debug instance opens nothing).
     var openedURLs: [String] = []
     /// How a debug instance answers "open links of this kind?" (`link-answer yes|no`); each question is recorded.
@@ -391,36 +394,58 @@ final class DebugControl {
             guard let settingsWindow else { throw Failure(description: "no settings window") }
             if rest == "close" { settingsWindow.close() } else { settingsWindow.show() }
             if args.count == 2, args[0] == "height", let h = Double(args[1]) { settingsWindow.setHeight(h) }
+        case "setup":
+            // setup home DIR | show | yes | no | dump FILE: the first-launch sheet, wiring DIR instead of the real home
+            guard let setup, let window = setupWindow else { throw Failure(description: "no setup sheet") }
+            switch args.first {
+            case "home":
+                setup.model.home = args.dropFirst().joined(separator: " ")
+                setup.model.anyBundle = true
+            case "show":
+                guard setup.model.home != NSHomeDirectory() else { throw Failure(description: "set `setup home DIR` first") }
+                setup.show(on: window)
+            case "yes": setup.press(setUp: true)
+            case "no": setup.press(setUp: false)
+            case "dump":
+                guard args.count == 2 else { throw Failure(description: "need FILE") }
+                try JSONSerialization.data(withJSONObject: setup.debugState).write(to: URL(fileURLWithPath: args[1]))
+            default: throw Failure(description: "setup home DIR|show|yes|no|dump FILE")
+            }
+        case "offer":
+            // offer ID yes|no: Install or No on the offer card
+            guard args.count == 2, let app = NSApp.delegate as? AppDelegate else { throw Failure(description: "need ID yes|no") }
+            guard controller.offerView.items.contains(where: { $0.id == args[0] }) else { throw Failure(description: "no offer card for \(args[0])") }
+            app.answerOffer(args[0], install: args[1] == "yes")
         case "rename-ui":
             controller.renameSelectedWorkspace()
-        case "sidebar-shot":
-            guard let path = args.first else { throw Failure(description: "need FILE") }
-            let v = controller.sidebarCard.sidebar
-            let img = NSImage(size: v.bounds.size)
-            img.lockFocusFlipped(true)
-            NSColor(white: 0.13, alpha: 1).setFill()
-            NSRect(origin: .zero, size: v.bounds.size).fill()
-            v.draw(v.bounds)
-            img.unlockFocus()
-            guard let tiff = img.tiffRepresentation, let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:])
-            else { throw Failure(description: "could not render") }
-            try png.write(to: URL(fileURLWithPath: path))
+        case "shot":
+            guard args.count == 2 else { throw Failure(description: "shot sidebar|setup FILE") }
+            let png: Data?
+            switch args[0] {
+            case "sidebar":
+                let v = controller.sidebarCard.sidebar
+                let img = NSImage(size: v.bounds.size)
+                img.lockFocusFlipped(true)
+                NSColor(white: 0.13, alpha: 1).setFill()
+                NSRect(origin: .zero, size: v.bounds.size).fill()
+                v.draw(v.bounds)
+                img.unlockFocus()
+                png = img.tiffRepresentation.flatMap { NSBitmapImageRep(data: $0)?.representation(using: .png, properties: [:]) }
+            case "setup": png = setup?.snapshot()
+            default: throw Failure(description: "shot sidebar|setup FILE")
+            }
+            guard let png else { throw Failure(description: "nothing to render") }
+            try png.write(to: URL(fileURLWithPath: args[1]))
         case "switcher":
             let sw = controller.switcher
             switch args.first ?? "" {
-            case "open": sw.open()
             case "close": sw.close()
             case "toggle": sw.toggle()
             case "query": sw.setQuery(rest.split(separator: " ", maxSplits: 1).dropFirst().first.map(String.init) ?? "")
-            case "move": sw.move(Int(args.dropFirst().first ?? "1") ?? 1)
-            case "choose": sw.choose(args.dropFirst().first.flatMap { Int($0) })
-            case "shot":
-                guard let path = args.dropFirst().first else { throw Failure(description: "need FILE") }
-                try sw.snapshot().write(to: URL(fileURLWithPath: path))
-            default: throw Failure(description: "switcher open|close|toggle|query TEXT|move N|choose [N]|shot FILE")
+            default: throw Failure(description: "switcher toggle|close|query TEXT")
             }
         case "quit":
-            NSApp.terminate(nil)
+            AppQuit.now()
         default:
             throw Failure(description: "unknown command")
         }
@@ -524,6 +549,8 @@ final class DebugControl {
                 "contentWidth": controller.sidebarCard.scroll.contentView.frame.width,
             ] as [String: Any],
             "switcher": controller.switcher.debugState,
+            "offers": controller.offerView.items.map { ["id": $0.id, "team": $0.team, "trusted": $0.teamTrusted,
+                                                         "note": OfferView.note($0)] as [String: Any] },
             "dividers": controller.dividerViews.map { id, v in
                 ["split": id.uuidString, "axis": v.axis.rawValue,
                  "frame": [v.frame.minX, v.frame.minY, v.frame.width, v.frame.height]] as [String: Any]

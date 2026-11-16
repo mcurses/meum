@@ -2,6 +2,17 @@ import AppKit
 import MeumControl
 import MeumCore
 
+/// Quits meum. AppKit ignores `terminate` while a window has a sheet attached (the setup sheet): those are closed
+/// first, the same as Not Now. Every quit goes through here (the menu, an update's restart, tests).
+@MainActor
+enum AppQuit {
+    static func now() {
+        for w in NSApp.windows { if let s = w.attachedSheet { w.endSheet(s) } }
+        (NSApp.delegate as? AppDelegate)?.setup.dismiss()
+        NSApp.terminate(nil)
+    }
+}
+
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let options: AppOptions
@@ -13,6 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var settings: AppSettings!
     var settingsWindow: SettingsWindowController!
     var help: HelpWindowController!
+    let setup = SetupSheetController()
     var widgets: WidgetManager!
     var updater: Updater!
     var updates: UpdateCenter!
@@ -63,6 +75,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         help = HelpWindowController(socket: paths.socket.path)
         menu.onHelp = { [weak self] in self?.help.show($0) }
         menu.onSettingsSection = { [weak self] in self?.settingsWindow.show(section: $0) }
+        menu.onSetup = { [weak self] in
+            guard let self else { return }
+            NSApp.activate(ignoringOtherApps: true)
+            self.setup.show(on: self.controller.window)
+        }
+        setup.onUninstallHelp = { [weak self] in self?.help.show(.uninstall) }
         WidgetSlotCardView.onGetWidgets = { [weak self] in self?.settingsWindow.show(section: "widgets") }
         SettingsJSON.themeNames = { GhosttyApp.shared.themeNames }
         control.onOpenSettings = { [weak self] in self?.settingsWindow.show(section: $0) }
@@ -75,6 +93,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.start()
         widgets = WidgetManager(controller: controller, control: control, directory: options.widgetsDir)
         control.widgets = widgets
+        control.installer.openSettings = { [weak self] section in
+            Log.info("opening Settings at \(section)")
+            // a background test instance never puts a window in front of the person at the Mac
+            guard let self, !self.controller.background else { return }
+            self.settingsWindow.show(section: section)
+        }
+        control.installer.onOffersChanged = { [weak self] in self?.showOffers() }
+        controller.offerView.onAnswer = { [weak self] id, install in self?.answerOffer(id, install: install) }
         controller.widgets = widgets
         settingsWindow.widgets = widgets
         widgets.startHelpers()
@@ -86,6 +112,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Self.refreshHookScript()
         }
         updates.start()
+        // the first-launch sheet: once, on the real state only (a test instance would wire the real Claude config)
+        if !options.isolated && options.debugDir == nil { setup.offerOnce(on: controller.window, settings: settings) }
 
         if let dir = options.debugDir {
             debug = DebugControl(dir: dir, controller: controller, control: control)
@@ -96,10 +124,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             debug?.settingsWindow = settingsWindow
             debug?.help = help
+            debug?.setup = setup
+            debug?.setupWindow = controller.window
             debug?.start()
         }
         if let t = options.autoquit {
-            DispatchQueue.main.asyncAfter(deadline: .now() + t) { NSApp.terminate(nil) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + t) { AppQuit.now() }
+        }
+    }
+
+    /// The widgets other programs offered, on the card under the sidebar.
+    func showOffers() {
+        let teams = settings.value.widgetTeamIDs
+        controller.showOffers(control.installer.offers.map {
+            OfferView.Item(id: $0.id, displayName: $0.displayName, version: $0.version, team: $0.team, signer: $0.signer,
+                           teamTrusted: teams.contains($0.team), isUpdate: $0.isUpdate)
+        })
+    }
+
+    /// Install or No on an offer card. A failed install says why in a sheet on the window.
+    func answerOffer(_ id: String, install: Bool) {
+        guard install else { control.installer.declineOffer(id); return }
+        do {
+            try control.installer.acceptOffer(id)
+        } catch {
+            Log.error("widget offer \(id): \(error)")
+            if controller.background { return }
+            let a = NSAlert()
+            a.messageText = "The widget was not installed"
+            a.informativeText = "\(error)"
+            a.beginSheetModal(for: controller.window)
         }
     }
 
@@ -164,19 +218,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
+
     /// meum:// links from other apps. `meum://focus?claude=<session id>`: the tab running that Claude Code session,
-    /// its workspace shown and meum in front (as `meum tab focus --claude-id`). Anything else is logged and ignored.
+    /// its workspace shown and meum in front (as `meum tab focus --claude-id`). `meum://open?path=<absolute path>`:
+    /// the file in its default app, only when it lies under a folder of Settings ▸ Folders that links may open and has an
+    /// allowed suffix (`LinkOpen`); meum stays where it is. Anything else is logged and ignored.
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls { openLink(url) }
     }
 
     func openLink(_ url: URL) {
         guard let controller else { return }
+        if url.scheme == "meum", url.host == "open" {
+            let s = settings.value
+            switch LinkOpen.check(url: url, folders: s.boardOpenFolders, suffixes: s.boardOpenSuffixes) {
+            case .success(let file): InstalledAppOpen.open(file)
+            case .failure(let why): Log.error("link \(url.absoluteString): refused, \(why)")
+            }
+            return
+        }
         let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
         guard url.scheme == "meum", url.host == "focus", let ref = query.first(where: { $0.name == "claude" })?.value,
               !ref.isEmpty else {
             // no focus change: a link from anywhere must not pull the user's keystrokes into meum
-            Log.error("link \(url.absoluteString): not one meum knows (meum://focus?claude=<session id>)")
+            Log.error("link \(url.absoluteString): not one meum knows (meum://focus?claude=<session id> or meum://open?path=<absolute path>)")
             return
         }
         // the same lookup as tab.select {claude}: a whole id or a unique prefix

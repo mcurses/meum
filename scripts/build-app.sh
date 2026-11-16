@@ -8,7 +8,8 @@
 #   Contents/Resources/bin/zmx         the bundled zmx
 #   Contents/Resources/bin/meum         the `meum` CLI (root package); bin/ is prepended to PATH in every tab
 #   Contents/Resources/bin/meum-hook    the Claude Code hook forwarder (Resources/bin/meum-hook)
-#   Contents/Resources/meum.icns       the app icon (Resources/icon/, made from meum-1024-opaque.png)
+#   Contents/Resources/Assets.car       the app icon, compiled by actool from Resources/icon/meum.icon
+#   Contents/Resources/meum.icns        its flattened fallback for macOS before 26
 #   Contents/Frameworks/libMeumKit.dylib the widget interface, shared with every widget library at run time
 # Run scripts/setup.sh first (it short-circuits when vendor/ is ready).
 #
@@ -50,7 +51,10 @@ cp "$(dirname "$BIN")/libMeumKit.dylib" "$APP/Contents/Frameworks/libMeumKit.dyl
 install_name_tool -add_rpath @executable_path/../Frameworks "$APP/Contents/MacOS/meum" 2>/dev/null || true
 cp "$ZMX" "$APP/Contents/Resources/bin/zmx"
 cp "$CLI" "$APP/Contents/Resources/bin/meum"
-cp "$ROOT/Resources/icon/meum.icns" "$APP/Contents/Resources/meum.icns"
+# the icon in its four macOS appearances (Assets.car) plus a flattened meum.icns fallback, 16-1024 px
+xcrun actool "$ROOT/Resources/icon/meum.icon" --compile "$APP/Contents/Resources" \
+  --platform macosx --minimum-deployment-target 14.0 --app-icon meum --standalone-icon-behavior all \
+  --output-partial-info-plist "$ROOT/build/icon-partial-Info.plist" >/dev/null
 cp "$ROOT/Resources/bin/meum-hook" "$APP/Contents/Resources/bin/meum-hook"
 chmod 755 "$APP/Contents/Resources/bin/meum-hook"
 # Ghostty's resources without the docs; terminfo as the sibling directory
@@ -81,6 +85,7 @@ cat > "$APP/Contents/Info.plist" <<EOF
   <key>CFBundleDisplayName</key><string>meum</string>
   <key>CFBundleExecutable</key><string>meum</string>
   <key>CFBundleIconFile</key><string>meum</string>
+  <key>CFBundleIconName</key><string>meum</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>$VERSION</string>
   <key>CFBundleVersion</key><string>$BUILD</string>

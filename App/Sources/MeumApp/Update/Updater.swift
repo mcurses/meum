@@ -156,7 +156,7 @@ final class Updater {
                 do { try await install(r) } catch { alert("The update did not install", "\(error)") }
             }
         case .alertThirdButtonReturn:
-            if let p = r.page { NSWorkspace.shared.open(p) }
+            if let p = r.page { InstalledAppOpen.open(p) }
         default: break
         }
     }
@@ -270,7 +270,7 @@ final class Updater {
         p.arguments = ["-c", "while kill -0 \(pid) 2>/dev/null; do sleep 0.2; done; \(start)"]
         p.environment = env
         try? p.run()
-        NSApp.terminate(nil)
+        AppQuit.now()
     }
 
     private static func run(_ tool: String, _ args: [String]) async throws {

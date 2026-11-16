@@ -90,4 +90,17 @@ final class WorkspaceSearchTests: XCTestCase {
         // a tab does not match through its workspace's name
         XCTAssertFalse(WorkspaceSearch.results(s, query: "work zsh").contains { if case .tab = $0.target { return true }; return false })
     }
+
+    /// Return chooses the first row: with nothing typed the workspace last left, else the best match, a tab's row
+    /// leading to its workspace and tab. At most `maxTabs` tab rows.
+    func testWhatReturnChooses() {
+        let tabs = (0..<20).map { _ in Tab(title: "review notes") }
+        let a = ws("alpha"), b = ws("beta", tabs: tabs)
+        let s = AppState(workspaces: [a, b], selectedWorkspaceID: a.id)
+        XCTAssertEqual(WorkspaceSearch.results(s, query: "", recent: [b.id]).first?.target, .workspace(b.id))
+        XCTAssertEqual(WorkspaceSearch.results(s, query: "alp").first?.target, .workspace(a.id))
+        let r = WorkspaceSearch.results(s, query: "review")
+        XCTAssertEqual(r.first?.target, .tab(workspace: b.id, tab: tabs[0].id))
+        XCTAssertEqual(r.count, WorkspaceSearch.maxTabs)
+    }
 }

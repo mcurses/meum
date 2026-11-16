@@ -233,8 +233,7 @@ final class WidgetInstaller {
 
         // a private work folder
         let fm = FileManager.default
-        let work = fm.temporaryDirectory.appendingPathComponent("meum-install-\(UUID().uuidString)", isDirectory: true)
-        try fm.createDirectory(at: work, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let work = try Self.workFolder()
         defer { try? fm.removeItem(at: work) }
 
         // download and check the zip against the catalog
@@ -263,22 +262,49 @@ final class WidgetInstaller {
         guard folders.count == 1, let folder = folders.first else {
             throw InstallError(description: "the zip must hold exactly one .meumwidget folder")
         }
+        let checked = try Self.check(folder)
+        guard checked.id == w.id else {
+            throw InstallError(description: "the zip holds '\(checked.id)', not '\(w.id)'")
+        }
+        try swapIn(folder, id: w.id, existing: existing, work: work)
+        pins.pins[w.id] = .init(sha256: checked.libraryHash, source: .catalog, version: w.version, helperSha256: checked.helperHash)
+        save()
+        Log.info("widget \(existing == nil ? "installed" : "updated"): \(w.id) \(w.version)")
+        widgets.reload()
+        return widgets.listJSON()
+    }
+
+    // MARK: checking a bundle
+
+    /// A `.meumwidget` folder that passed the checks every install makes.
+    struct Checked {
+        var id: String
+        var displayName: String
+        var version: String?
+        var library: URL
+        var libraryHash: String
+        var helperHash: String?
+    }
+
+    /// The checks every install makes on a widget folder (a private copy): a manifest naming a library inside it, a
+    /// library that is a plain file, no MeumKit of its own, a helper inside the folder.
+    nonisolated static func check(_ folder: URL) throws -> Checked {
+        let fm = FileManager.default
         let manifestData = try Data(contentsOf: folder.appendingPathComponent("manifest.json"))
         guard let manifest = try JSONSerialization.jsonObject(with: manifestData) as? [String: Any],
-              let lib = manifest["library"] as? String, !lib.contains("/") else {
+              let lib = manifest["library"] as? String, !lib.contains("/"), !lib.hasPrefix(".") else {
             throw InstallError(description: "manifest.json is missing or has no library")
         }
-        guard (manifest["id"] as? String) == w.id else {
-            throw InstallError(description: "the zip holds '\(manifest["id"] as? String ?? "?")', not '\(w.id)'")
+        guard let id = manifest["id"] as? String, !id.isEmpty, !id.contains("/") else {
+            throw InstallError(description: "manifest.json has no id")
         }
         let library = folder.appendingPathComponent(lib)
-        guard fm.fileExists(atPath: library.path) else { throw InstallError(description: "\(lib) is missing from the zip") }
+        guard WidgetHelpers.isPlainFile(library) else { throw InstallError(description: "\(lib) is missing or not a plain file") }
         // widgets must use meum's MeumKit, never a copy of their own (the types would not match)
         if let found = fm.enumerator(at: folder, includingPropertiesForKeys: nil)?.compactMap({ $0 as? URL })
             .first(where: { $0.lastPathComponent == "libMeumKit.dylib" }) {
             throw InstallError(description: "the widget bundles its own \(found.lastPathComponent); it must use meum's")
         }
-        let libHash = try WidgetHash.sha256(of: library)
         var helperHash: String?
         if let h = manifest["helper"] as? [String: Any], let cmd = h["command"] as? String {
             guard WidgetHelpers.isInsideFolder(cmd),
@@ -287,14 +313,26 @@ final class WidgetInstaller {
             }
             helperHash = try WidgetHash.sha256(of: real)
         }
+        return Checked(id: id, displayName: (manifest["displayName"] as? String) ?? id,
+                       version: manifest["version"] as? String, library: library,
+                       libraryHash: try WidgetHash.sha256(of: library), helperHash: helperHash)
+    }
 
-        // swap it in, keeping the disabled switch
-        let dest = widgets.directory.appendingPathComponent(existing?.folder.lastPathComponent ?? folder.lastPathComponent)
+    /// Moves a checked folder into the widgets directory in place of `existing` (keeping its disabled switch).
+    /// `newName`: the folder a new install gets (an offer: named after its id, never a name the offering program
+    /// chose); refused when a folder of that name exists, so an install never replaces another widget.
+    private func swapIn(_ folder: URL, id: String, existing: WidgetManager.Entry?, work: URL, newName: String? = nil) throws {
+        guard let widgets else { throw ControlError.unavailable("no widget host") }
+        let fm = FileManager.default
+        let dest = widgets.directory.appendingPathComponent(existing?.folder.lastPathComponent ?? newName ?? folder.lastPathComponent)
+        if existing == nil, newName != nil, fm.fileExists(atPath: dest.path) {
+            throw InstallError(description: "the widgets folder already has a \(dest.lastPathComponent) that is not this widget; not installed")
+        }
         try fm.createDirectory(at: widgets.directory, withIntermediateDirectories: true)
         if let existing, fm.fileExists(atPath: existing.folder.appendingPathComponent("disabled").path) {
             fm.createFile(atPath: folder.appendingPathComponent("disabled").path, contents: Data())
         }
-        if existing != nil { stopHelper?(w.id) }
+        if existing != nil { stopHelper?(id) }
         let old = work.appendingPathComponent("old", isDirectory: true)
         if fm.fileExists(atPath: dest.path) { try fm.moveItem(at: dest, to: old) }
         do {
@@ -303,11 +341,183 @@ final class WidgetInstaller {
             if fm.fileExists(atPath: old.path) { try? fm.moveItem(at: old, to: dest) }
             throw error
         }
-        pins.pins[w.id] = .init(sha256: libHash, source: .catalog, version: w.version, helperSha256: helperHash)
+    }
+
+    /// A private work folder (0700), removed by the caller.
+    nonisolated static func workFolder() throws -> URL {
+        let work = FileManager.default.temporaryDirectory.appendingPathComponent("meum-install-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        return work
+    }
+
+    /// The Team ID of a valid Developer ID signature on the file, whichever team it is; nil when unsigned or not
+    /// Developer ID. (`signedTeam` asks the narrower question: one of the allowed teams.)
+    nonisolated static func developerTeam(_ url: URL) -> String? { developerSigner(url)?.team }
+
+    /// The Team ID and the certificate's name ("Name (TEAMID)", from "Developer ID Application: Name (TEAMID)") of a
+    /// valid Developer ID signature on the file; nil when unsigned or not Developer ID.
+    nonisolated static func developerSigner(_ url: URL) -> (team: String, name: String)? {
+        var code: SecStaticCode?
+        guard SecStaticCodeCreateWithPath(url as CFURL, [], &code) == errSecSuccess, let code else { return nil }
+        var req: SecRequirement?
+        let text = "anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and "
+            + "certificate leaf[field.1.2.840.113635.100.6.1.13] exists"
+        guard SecRequirementCreateWithString(text as CFString, [], &req) == errSecSuccess, let req,
+              SecStaticCodeCheckValidity(code, SecCSFlags(rawValue: kSecCSCheckAllArchitectures), req) == errSecSuccess else { return nil }
+        var info: CFDictionary?
+        guard SecCodeCopySigningInformation(code, SecCSFlags(rawValue: kSecCSSigningInformation), &info) == errSecSuccess,
+              let dict = info as? [String: Any] else { return nil }
+        guard let team = dict[kSecCodeInfoTeamIdentifier as String] as? String else { return nil }
+        var name = team
+        if let certs = dict[kSecCodeInfoCertificates as String] as? [SecCertificate], let leaf = certs.first,
+           let summary = SecCertificateCopySubjectSummary(leaf) as String? {
+            name = summary.replacingOccurrences(of: "Developer ID Application: ", with: "")
+        }
+        return (team, name)
+    }
+
+    // MARK: offers (docs/design/architecture.md, "First launch and offers")
+
+    /// A widget another program offered (`widget.offer`), waiting for the person's Install or No. In memory only.
+    struct Offer: Equatable {
+        var id: String
+        var displayName: String
+        var version: String?
+        var team: String
+        /// The signing certificate's name with its team ("Name (TEAMID)"), for the card.
+        var signer: String
+        var path: String
+        /// The library's hash when it was offered: Install refuses a bundle that changed since.
+        var libraryHash: String
+        var isUpdate: Bool
+    }
+
+    /// One per widget id, in the order they came.
+    private(set) var offers: [Offer] = []
+    /// Called when `offers` changes (the sidebar's offer card).
+    var onOffersChanged: (() -> Void)?
+    /// Opens Settings at a section (the allow step for a widget whose team is not trusted).
+    var openSettings: ((String) -> Void)?
+
+    /// The largest offered folder meum copies (a widget is a library, a manifest and maybe a helper).
+    nonisolated static let offerMaxBytes = 16 << 20
+    /// Longest widget name and version shown on the offer card.
+    nonisolated static let offerMaxName = 60
+
+    /// What a private copy of an offered folder holds, or why it was refused.
+    struct OfferCheck: Sendable {
+        var id = "", displayName = "", version: String?, libraryHash = "", team = "", signer = "", refused: String?
+    }
+
+    /// Copies an offered folder into a private work folder and checks it, off the main thread: not a link, at most
+    /// `offerMaxBytes`, the install checks, a Developer ID signature.
+    nonisolated static func checkOffered(_ url: URL) -> OfferCheck {
+        var r = OfferCheck()
+        guard url.pathExtension == "meumwidget" else { r.refused = "not a .meumwidget folder: \(url.path)"; return r }
+        let fm = FileManager.default
+        guard let type = (try? fm.attributesOfItem(atPath: url.path))?[.type] as? FileAttributeType, type == .typeDirectory else {
+            r.refused = "not a folder (a link to one is refused): \(url.path)"; return r
+        }
+        var bytes = 0, items = 0
+        if let e = fm.enumerator(at: url, includingPropertiesForKeys: [.fileSizeKey], options: []) {
+            for case let f as URL in e {
+                bytes += (try? f.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+                items += 1
+                if bytes > offerMaxBytes || items > 2000 {
+                    r.refused = "the folder is larger than a widget (over \(offerMaxBytes >> 20) MB or 2000 files)"; return r
+                }
+            }
+        }
+        guard let work = try? workFolder() else { r.refused = "no work folder"; return r }
+        defer { try? fm.removeItem(at: work) }
+        let copy = work.appendingPathComponent(url.lastPathComponent, isDirectory: true)
+        do { try run("/usr/bin/ditto", [url.path, copy.path]) } catch { r.refused = "cannot read \(url.path)"; return r }
+        let c: Checked
+        do { c = try check(copy) } catch { r.refused = "\(error)"; return r }
+        guard let signer = developerSigner(c.library) else {
+            r.refused = "\(c.library.lastPathComponent) is not signed with a Developer ID"; return r
+        }
+        func cap(_ t: String, _ n: Int) -> String { t.count > n ? String(t.prefix(n - 1)) + "…" : t }
+        r.id = c.id
+        r.displayName = cap(c.displayName.replacingOccurrences(of: "\n", with: " "), offerMaxName)
+        r.version = c.version.map { cap($0, 20) }
+        r.libraryHash = c.libraryHash
+        r.team = signer.team
+        r.signer = cap(signer.name, offerMaxName + 20)
+        return r
+    }
+
+    /// Checks a bundle another program offers and, when it is new or newer and signed by the installed widget's team,
+    /// shows it to the person as a card. Nothing is copied into the widgets folder or trusted here.
+    func offer(path: String) async throws -> JSON {
+        guard widgets != nil else { throw ControlError.unavailable("no widget host") }
+        let url = URL(fileURLWithPath: path).standardizedFileURL
+        let c = await Task.detached { Self.checkOffered(url) }.value
+        if let reason = c.refused { return Self.refused(reason) }
+        guard let widgets else { throw ControlError.unavailable("no widget host") }
+        let existing = widgets.entry(manifestID: c.id)
+        if existing == nil, FileManager.default.fileExists(atPath: widgets.directory.appendingPathComponent(c.id + ".meumwidget").path) {
+            return Self.refused("the widgets folder already has a \(c.id).meumwidget that holds another widget")
+        }
+        if let existing, (try? WidgetHash.sha256(of: existing.library)) == c.libraryHash {
+            return ["state": "installed", "id": .string(c.id)]
+        }
+        if let existing, let have = installedVersion(existing.id), let v = c.version, !widgetVersionIsNewer(v, than: have) {
+            return Self.refused("\(c.displayName) \(have) is installed; the offer is \(v), not newer")
+        }
+        // an update comes from the developer of the installed widget, or not at all
+        if let existing, Self.developerTeam(existing.library) != c.team {
+            let had = Self.developerTeam(existing.library).map { "team \($0)" } ?? "no Developer ID"
+            return Self.refused("\(c.displayName) is installed from \(had); the offer is signed by a different developer (team \(c.team))")
+        }
+        let o = Offer(id: c.id, displayName: c.displayName, version: c.version, team: c.team, signer: c.signer, path: url.path,
+                      libraryHash: c.libraryHash, isUpdate: existing != nil)
+        if let i = offers.firstIndex(where: { $0.id == o.id }) { offers[i] = o } else { offers.append(o) }
+        Log.info("widget offered: \(o.id) \(o.version ?? "") signed by \(o.signer) from \(o.path)")
+        onOffersChanged?()
+        return ["state": "offered", "id": .string(o.id), "team": .string(o.team)]
+    }
+
+    nonisolated private static func refused(_ reason: String) -> JSON {
+        Log.info("widget offer refused: \(reason)")
+        return ["state": "refused", "reason": .string(reason)]
+    }
+
+    /// The person's No: the card goes, nothing changes.
+    func declineOffer(_ id: String) {
+        offers.removeAll { $0.id == id }
+        onOffersChanged?()
+    }
+
+    /// The person's Install: copies the offered bundle again into a private folder, checks it again (it must be what
+    /// the card showed), and moves it into the widgets folder. It is not pinned: a team on the allow list loads it,
+    /// any other opens Settings ▸ Widgets at the widget, whose Allow is the only place trust is given.
+    func acceptOffer(_ id: String) throws {
+        guard let widgets else { throw ControlError.unavailable("no widget host") }
+        guard let o = offers.first(where: { $0.id == id }) else { throw ControlError.notFound("no offer for '\(id)'") }
+        offers.removeAll { $0.id == id }
+        onOffersChanged?()
+        let url = URL(fileURLWithPath: o.path)
+        if let reason = Self.checkOffered(url).refused { throw InstallError(description: "\(o.displayName): \(reason); not installed") }
+        let work = try Self.workFolder()
+        defer { try? FileManager.default.removeItem(at: work) }
+        let copy = work.appendingPathComponent(url.lastPathComponent, isDirectory: true)
+        try Self.run("/usr/bin/ditto", [o.path, copy.path])
+        let c = try Self.check(copy)
+        guard c.id == o.id, c.libraryHash == o.libraryHash, Self.developerTeam(c.library) == o.team else {
+            throw InstallError(description: "\(o.displayName) changed since it was offered; not installed")
+        }
+        let existing = widgets.entry(manifestID: o.id)
+        if let existing, Self.developerTeam(existing.library) != o.team {
+            throw InstallError(description: "\(o.displayName) is installed from another developer; not installed")
+        }
+        try swapIn(copy, id: o.id, existing: existing, work: work, newName: o.id + ".meumwidget")
+        // an older pin (a library install) is not this bundle's
+        pins.pins[o.id] = nil
         save()
-        Log.info("widget \(existing == nil ? "installed" : "updated"): \(w.id) \(w.version)")
+        Log.info("widget installed from an offer: \(o.id) \(o.version ?? "") signed by \(o.team)")
         widgets.reload()
-        return widgets.listJSON()
+        if !settings().widgetTeamIDs.contains(o.team) { openSettings?("widgets") }
     }
 
     /// Removes a widget: its tabs show "not installed", its card goes; `data` also deletes its data folder.
@@ -325,7 +535,7 @@ final class WidgetInstaller {
         return widgets.listJSON()
     }
 
-    private static func run(_ tool: String, _ args: [String]) throws {
+    nonisolated private static func run(_ tool: String, _ args: [String]) throws {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: tool)
         p.arguments = args

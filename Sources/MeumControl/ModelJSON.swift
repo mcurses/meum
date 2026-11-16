@@ -64,7 +64,8 @@ public enum ModelJSON {
     public static func snapshot(_ a: AgentSnapshot?) -> JSON {
         guard let a else { return .null }
         return ["sessionID": .string(a.sessionID), "configDir": str(a.configDir),
-                "transcriptPath": str(a.transcriptPath), "cwd": str(a.cwd), "name": str(a.name),
+                "transcriptPath": str(a.transcriptPath), "cwd": str(a.cwd), "projectDir": str(a.projectDir),
+                "name": str(a.name),
                 "labels": .array((a.labels ?? []).map { .string($0) })]
     }
 

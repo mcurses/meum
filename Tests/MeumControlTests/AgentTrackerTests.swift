@@ -239,6 +239,64 @@ final class AgentTrackerTests: XCTestCase {
         XCTAssertNil(ResumeInfo(json: ["agent": .null]))
     }
 
+    func testResumeUsesTheProjectFolder() {
+        let home = "/Users/dev"
+        // the session was started in /p and the agent cd'd to /p/sub: Claude Code finds it only from /p
+        XCTAssertEqual(ResumeCommand.build(ResumeInfo(sessionID: "a", cwd: "/p/sub", projectDir: "/p"), home: home),
+                       "cd /p && claude --resume a")
+        XCTAssertEqual(ResumeCommand.build(ResumeInfo(sessionID: "a", cwd: "/p/sub", projectDir: ""), home: home),
+                       "cd /p/sub && claude --resume a")
+        XCTAssertEqual(ResumeInfo(json: ["agent": ["sessionID": "s", "cwd": "/w", "projectDir": "/p"]]),
+                       ResumeInfo(sessionID: "s", cwd: "/w", projectDir: "/p"))
+        XCTAssertEqual(ResumeCommand.notFound(ResumeInfo(sessionID: "s1")),
+                       "printf '%s\\n' 'meum: the Claude session s1 was not found, so it was not resumed.'")
+    }
+
+    func testTranscriptCwdReadsTheFirstEntryWithOne() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let f = dir.appendingPathComponent("s.jsonl")
+        try """
+        {"type":"summary","summary":"x"}
+        not json
+        {"type":"user","cwd":"/start/here","sessionId":"s"}
+        {"type":"user","cwd":"/start/here/later"}
+        """.write(to: f, atomically: true, encoding: .utf8)
+        XCTAssertEqual(ResumeCommand.transcriptCwd(path: f.path), "/start/here")
+        XCTAssertNil(ResumeCommand.transcriptCwd(path: dir.appendingPathComponent("missing.jsonl").path))
+    }
+
+    func testTrackerKeepsTheProjectFolder() {
+        var t = AgentTracker()
+        t.apply(tab: "T", configDir: "", projectDir: "/p", payload: hook("SessionStart", extra: ["cwd": "/p"]), at: at(0))
+        t.apply(tab: "T", configDir: "", payload: hook("UserPromptSubmit", extra: ["cwd": "/p/sub", "prompt_id": "x"]), at: at(1))
+        XCTAssertEqual(t.state(of: "T")?.projectDir, "/p")
+        XCTAssertEqual(t.state(of: "T")?.cwd, "/p/sub")
+    }
+
+    func testAResumedTabWithoutHooksTurnsToWaiting() throws {
+        final class Clock: @unchecked Sendable { var t: TimeInterval = 0 }
+        let clock = Clock()
+        let svc = AgentService(bus: EventBus(), now: { Date(timeIntervalSince1970: clock.t) })
+        svc.resuming(tab: "A", sessionID: "sa")
+        svc.resuming(tab: "B", sessionID: "sb")
+        clock.t = 5
+        _ = try svc.handleHook(params: ["tab": "B", "payload": hook("SessionStart", sid: "sb")])
+        clock.t = 19
+        XCTAssertEqual(svc.checkStarting(limit: 20), [])
+        clock.t = 21
+        XCTAssertEqual(svc.checkStarting(limit: 20), ["A"])
+        XCTAssertEqual(svc.state(of: "A")?.phase, .needsInput)
+        XCTAssertEqual(svc.state(of: "A")?.unread, true)
+        XCTAssertEqual(svc.state(of: "A")?.sessionID, "sa")
+        XCTAssertEqual(svc.state(of: "B")?.phase, .idle)   // B spoke in time
+        XCTAssertEqual(svc.checkStarting(limit: 20), [])   // once
+        // its first hook once the question is answered puts it back to normal
+        _ = try svc.handleHook(params: ["tab": "A", "payload": hook("SessionStart", sid: "sa")])
+        XCTAssertEqual(svc.state(of: "A")?.phase, .idle)
+    }
+
     func testAgentServiceTranslatesHooksIntoEvents() throws {
         let bus = EventBus()
         let svc = AgentService(bus: bus, now: { Date(timeIntervalSince1970: 5) })

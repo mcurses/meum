@@ -103,6 +103,17 @@ AgentSnapshot { sessionID: String, configDir: String?, transcriptPath: String?, 
     before writing.
   - `install` without `--yes` only prints the planned diff.
   - **Never run it against Max's real dirs during development**: tests use temp dirs.
+- **First launch and offers** (`ClaudeSetup`, `SetupSheet`, `widget.offer`): no other program writes meum's state
+  or folders; meum does its own wiring, asks first where something is written or trusted, and says what it wrote.
+  The first start (setting `setupOffered` absent) shows a sheet once with the rows that have something to do: the
+  hooks (the code of `meum hooks install`), the MCP entry per Claude config folder (`claude mcp add --scope user`,
+  `CLAUDE_CONFIG_DIR` set for every folder but `~/.claude`) and a `~/.local/bin/meum` link when that folder is on the
+  login shell's PATH; the last two only from a meum in /Applications or ~/Applications. Not Now and Set Up both end
+  the offer; Help ▸ Set Up for Claude Code… reopens it. A tool that arrives later announces itself over the socket:
+  `widget.offer {path}` checks the signed bundle where it is and shows a card under the sidebar naming the signing
+  team; Install checks a private copy again (same id, library hash and team) and installs it unpinned, so trust is
+  still given only in Settings ▸ Widgets. Offers live in memory. Typing into a tab (`tab.paste`) has no gate beyond
+  the socket's same-user rule: over a Unix socket meum cannot name the program reliably.
 
 ## App (App/)
 
@@ -165,7 +176,6 @@ AgentSnapshot { sessionID: String, configDir: String?, transcriptPath: String?, 
   (reboot), and the second case is what resume is for.
 - **Startup commands** (resume, `tab.new --command`) run as `$SHELL -ilc '<cmd>; exec $SHELL -l'`, so rc-file
   PATH entries and shell functions (e.g. a `claude` wrapper) apply.
-- `tab.sendText` writes raw input through `zmx send`; a tab whose workspace was never shown has no session yet.
 - **Moving tabs** (`tab.move`, dragging a tab): reconcile detaches the surfaces of tabs that left their card into a
   pool and re-adds them to the new card, so the libghostty surface and its zmx client stay the same (no reattach,
   scrollback kept). A tab moved into a hidden workspace loses its surface; the zmx session lives on and is

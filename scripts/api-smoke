@@ -8,7 +8,7 @@ method in neither list fails the run, so a new one can't be added untested.
 
 Usage: scripts/api-smoke [--keep]     (--keep leaves the instance running for a look)
 """
-import json, os, shutil, socket, subprocess, sys, tempfile, time
+import json, os, shutil, socket, subprocess, sys, tempfile, threading, time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SKIPPED = {
@@ -21,11 +21,36 @@ SKIPPED = {
     "app.update.check": "asks GitHub",
     "app.update.install": "replaces the app",
     "notify": "posts a real notification as meum",
+    "widget.offer": "needs a Developer ID-signed widget folder and a person's Install on the card",
 }
 
 
 class Fail(Exception):
     pass
+
+
+class Events:
+    """An events.subscribe connection read on its own thread from the start, as a real subscriber reads it."""
+
+    def __init__(self, path):
+        self.s = socket.socket(socket.AF_UNIX)
+        self.s.connect(path)
+        self.s.sendall(b'{"id":1,"method":"events.subscribe","params":{}}\n')
+        self.types = set()
+        self.t = threading.Thread(target=self.read, daemon=True)
+        self.t.start()
+
+    def read(self):
+        f = self.s.makefile("rb")
+        for line in f:
+            o = json.loads(line)
+            if "type" in o:
+                self.types.add(o["type"])
+
+    def stop(self):
+        self.s.shutdown(socket.SHUT_RDWR)
+        self.t.join(5)
+        return set(self.types)
 
 
 class Client:
@@ -136,7 +161,7 @@ def run(c, events, tmp):
     typed, pasted = os.path.join(tmp, "typed"), os.path.join(tmp, "pasted")
     def attached():  # a new tab's terminal starts a moment after the model has it
         try:
-            c.call("tab.sendText", {"tab": tab2, "text": f"echo typed > {typed}\n"})
+            c.call("tab.paste", {"tab": tab2, "text": f"echo typed > {typed}", "submit": True})
             return True
         except Fail as f:
             if "unavailable" not in str(f):
@@ -193,22 +218,9 @@ def run(c, events, tmp):
     c.call("workspace.close", {"id": ws})
     check([w["id"] for w in c.call("workspace.list")] == [first], "workspace.close")
 
-    # events seen on the subscribed connection
-    seen = set()
-    events.settimeout(0.5)
-    buf = b""
-    try:
-        while True:
-            chunk = events.recv(65536)
-            if not chunk:
-                break
-            buf += chunk
-    except socket.timeout:
-        pass
-    for line in buf.decode().splitlines():
-        o = json.loads(line)
-        if "type" in o:
-            seen.add(o["type"])
+    # events seen on the subscribed connection (read all along: meum ends a subscriber that stops reading for 5 s)
+    time.sleep(0.5)
+    seen = events.stop()
     for e in ["workspace.added", "workspace.changed", "workspace.removed", "tab.added", "tab.removed", "tab.moved",
               "split.resized", "settings.changed", "status.changed", "agent.changed", "agent.hook", "tab.labels"]:
         check(e in seen, f"event {e} not seen (saw {sorted(seen)})")
@@ -222,7 +234,11 @@ def run(c, events, tmp):
 def main():
     keep = "--keep" in sys.argv
     tmp = tempfile.mkdtemp(prefix="meum-smoke-", dir="/tmp")
-    env = dict(os.environ, MEUMT=os.path.join(tmp, "t"), TMPDIR=tmp + "/", MEUM_AUTOQUIT="300")
+    # the test's shells read none of the user's startup files: a slow or stuck ~/.zshrc must not fail a release
+    zdot = os.path.join(tmp, "zdot")
+    os.makedirs(zdot)
+    env = dict(os.environ, MEUMT=os.path.join(tmp, "t"), TMPDIR=tmp + "/", MEUM_AUTOQUIT="300",
+               SHELL="/bin/zsh", ZDOTDIR=zdot)
     pid = int(subprocess.check_output([os.path.join(ROOT, "scripts/run-test-app.sh"), "--frame", "40,40,1000,640"],
                                       env=env).strip())
     sock = os.path.join(env["MEUMT"], "state", "meum.sock")
@@ -230,9 +246,7 @@ def main():
     try:
         wait_for(lambda: os.path.exists(sock), "the test meum's socket", timeout=20)
         time.sleep(1)
-        events = socket.socket(socket.AF_UNIX)
-        events.connect(sock)
-        events.sendall(b'{"id":1,"method":"events.subscribe","params":{}}\n')
+        events = Events(sock)
         work = os.path.join(tmp, "work")
         os.makedirs(work)
         n, e = run(Client(sock), events, work)

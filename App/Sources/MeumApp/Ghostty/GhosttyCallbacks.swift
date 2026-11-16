@@ -58,19 +58,26 @@ final class GhosttyCallbacks: @unchecked Sendable {
             DispatchQueue.main.async { MainActor.assumeIsolated { view.applyMouseShape(shape) } }
             return true
         case GHOSTTY_ACTION_OPEN_URL:
-            // `open_url.url` is a length-delimited slice, not NUL-terminated: honour `.len`.
+            // `open_url.url` is a length-delimited slice, not NUL-terminated: honour `.len`. A terminal's link
+            // (a URL, a path with :line:col, an OSC 8 link) is resolved by its tab (SurfaceView+Links).
             let u = action.action.open_url
             guard let ptr = u.url else { return true }
             let link = String(decoding: UnsafeRawBufferPointer(start: ptr, count: Int(u.len)), as: UTF8.self)
+            let view = surfaceView(from: target)
             DispatchQueue.main.async {
-                guard let url = URL(string: link), let scheme = url.scheme?.lowercased(),
-                      ["http", "https", "mailto", "file"].contains(scheme) else { return }
-                if url.isFileURL {
-                    NSWorkspace.shared.activateFileViewerSelecting([url])
-                } else {
-                    NSWorkspace.shared.open(url)
+                MainActor.assumeIsolated {
+                    if let view, view.linkHost != nil { view.openLinkFromGhostty(link); return }
+                    guard let url = URL(string: link), let scheme = url.scheme?.lowercased(),
+                          ["http", "https", "mailto"].contains(scheme) else { return }
+                    InstalledAppOpen.open(url)
                 }
             }
+            return true
+        case GHOSTTY_ACTION_MOUSE_OVER_LINK:
+            guard let view = surfaceView(from: target) else { return true }
+            let o = action.action.mouse_over_link
+            let link = o.url.map { String(decoding: UnsafeRawBufferPointer(start: $0, count: Int(o.len)), as: UTF8.self) } ?? ""
+            DispatchQueue.main.async { MainActor.assumeIsolated { view.hoverLinkFromGhostty(link) } }
             return true
         case GHOSTTY_ACTION_RING_BELL:
             return true

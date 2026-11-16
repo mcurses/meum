@@ -4,19 +4,26 @@ import MeumCore
 /// Builds the shell command that resumes an agent session after its zmx session is gone (after a reboot).
 /// The integration step plugs in MeumControl's resume builder; v1 core ships a stub that resumes nothing.
 protocol ResumeProvider: AnyObject {
-    /// A shell command line to run in the tab's new session, or nil for a plain shell.
-    func resumeCommand(for snapshot: AgentSnapshot, tab: Tab) -> String?
+    /// What to run in the tab's new session, or nil for a plain shell.
+    func resumeCommand(for snapshot: AgentSnapshot, tab: Tab) -> ResumeStart?
+}
+
+/// A command line for a tab's new session. `startsAgent` is false when it only says why nothing was resumed.
+struct ResumeStart {
+    var command: String
+    var startsAgent = true
 }
 
 final class NoResumeProvider: ResumeProvider {
-    func resumeCommand(for snapshot: AgentSnapshot, tab: Tab) -> String? { nil }
+    func resumeCommand(for snapshot: AgentSnapshot, tab: Tab) -> ResumeStart? { nil }
 }
 
 /// Debug stand-in (`MEUM_DEBUG_RESUME=1`): prints what would be resumed, so the seam can be checked end to end
 /// before the integration step plugs in the real builder.
 final class EchoResumeProvider: ResumeProvider {
-    func resumeCommand(for snapshot: AgentSnapshot, tab: Tab) -> String? {
-        "echo " + ZmxSessions.quote("meum-resume: session=\(snapshot.sessionID) cwd=\(snapshot.cwd ?? "-")")
+    func resumeCommand(for snapshot: AgentSnapshot, tab: Tab) -> ResumeStart? {
+        ResumeStart(command: "echo " + ZmxSessions.quote("meum-resume: session=\(snapshot.sessionID) cwd=\(snapshot.cwd ?? "-")"),
+                    startsAgent: false)
     }
 }
 
@@ -111,9 +118,9 @@ final class ZmxSessions {
         if live.contains(n) { return (attach, false) }
         var startup: String?
         var resumed = false
-        if let agent = tab.agent, let cmd = resume.resumeCommand(for: agent, tab: tab) {
-            startup = cmd
-            resumed = true
+        if let agent = tab.agent, let start = resume.resumeCommand(for: agent, tab: tab) {
+            startup = start.command
+            resumed = start.startsAgent
         } else if let cmd = tab.command, !cmd.isEmpty {
             startup = cmd
         }
@@ -123,6 +130,29 @@ final class ZmxSessions {
         let shell = ProcessEnvironment.shell
         let script = "\(startup); exec \(Self.quote(shell)) -l"
         return ("\(attach) \(Self.quote(shell)) -ilc \(Self.quote(script))", resumed)
+    }
+
+    /// `zmx run` arguments that start a tab's saved Claude session in a new detached zmx session, the way the tab
+    /// itself would start it (an interactive login shell, then a plain shell). nil when there is nothing to resume.
+    /// `exec` replaces the bash that `zmx run` types into, so its completion marker never runs.
+    func backgroundStart(for tab: Tab) -> [String]? {
+        guard let agent = tab.agent, let start = resume.resumeCommand(for: agent, tab: tab), start.startsAgent else { return nil }
+        let shell = ProcessEnvironment.shell
+        return ["run", name(for: tab.id), "-d", "exec", shell, "-ilc", "\(start.command); exec \(Self.quote(shell)) -l"]
+    }
+
+    /// Runs zmx with extra environment and a working directory, waiting for it (`zmx run -d` returns at once).
+    func run(_ args: [String], env: [String: String], cwd: String) {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: binary.contains("/") ? binary : "/usr/bin/env")
+        p.arguments = binary.contains("/") ? args : [binary] + args
+        p.environment = ProcessInfo.processInfo.environment.merging(env) { _, new in new }
+        p.currentDirectoryURL = URL(fileURLWithPath: cwd)
+        p.standardInput = FileHandle.nullDevice
+        p.standardOutput = FileHandle.nullDevice
+        p.standardError = FileHandle.nullDevice
+        do { try p.run() } catch { Log.error("zmx \(args.prefix(2).joined(separator: " ")): \(error)"); return }
+        p.waitUntilExit()
     }
 
     static func quote(_ s: String) -> String { GhosttyCallbacks.shellEscape(s) }

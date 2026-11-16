@@ -43,6 +43,10 @@ public struct Settings: Codable, Equatable, Sendable {
     /// Link schemes (besides http and https) a status entry's click may open without asking: each added when the
     /// user said yes to its first link (`StatusLink`). Changed only in meum, never over the socket.
     public var statusLinkSchemes: [String] = []
+    /// Folders a `meum://open?path=…` link from another app may open files from (in their default app), and the
+    /// suffixes it may open. The user's trust decision: set only in Settings, never over the socket.
+    public var boardOpenFolders: [String] = []
+    public var boardOpenSuffixes: [String] = ["md", "txt", "pdf"]
     /// Height of the widget card under the sidebar, unless `widgetHeightAuto`.
     public var widgetHeight: Double = 150
     /// The widget card takes the hosted widget's own height (150 when it has none).
@@ -92,6 +96,10 @@ public struct Settings: Codable, Equatable, Sendable {
     public static func isThemeName(_ name: String) -> Bool {
         !name.isEmpty && !name.hasPrefix(".") && !name.contains("/") && !name.contains("\\") && configSafe(name) == name
     }
+    /// The app a ⌘-clicked file opens in (a bundle id); nil: the file's default app, and a text editor for a
+    /// script or a file without one. An editor with a line URL scheme (VS Code, Cursor, Zed…) or Xcode opens
+    /// at the line of `file.swift:42`.
+    public var linkEditor: String?
     /// An extra Ghostty config file loaded after meum's own (and after `<state dir>/ghostty.conf`).
     public var ghosttyConfigPath: String?
     /// Clicks in the gaps between cards stay in meum instead of reaching the app behind.
@@ -106,6 +114,9 @@ public struct Settings: Codable, Equatable, Sendable {
     /// The one-line hint at the bottom of the window (gestures, terminals survive quitting, Settings, Help), until
     /// it is closed.
     public var showStartHint: Bool = true
+    /// The first-launch setup sheet was shown (answered or not); it never comes back by itself. Not a control API
+    /// key: only meum's own sheet sets it.
+    public var setupOffered: Bool = false
     /// Keyboard shortcut overrides: action id (`Shortcuts.actions`) -> "cmd+shift+r", or "" for none.
     public var shortcuts: [String: String] = [:]
 
@@ -129,6 +140,8 @@ public struct Settings: Codable, Equatable, Sendable {
         sidebarShowPin = v(.sidebarShowPin, d.sidebarShowPin)
         sidebarShowIcons = v(.sidebarShowIcons, d.sidebarShowIcons)
         statusLinkSchemes = v(.statusLinkSchemes, d.statusLinkSchemes)
+        boardOpenFolders = v(.boardOpenFolders, d.boardOpenFolders)
+        boardOpenSuffixes = v(.boardOpenSuffixes, d.boardOpenSuffixes)
         widgetHeight = v(.widgetHeight, d.widgetHeight)
         widgetHeightAuto = v(.widgetHeightAuto, d.widgetHeightAuto)
         widgetOrder = v(.widgetOrder, d.widgetOrder)
@@ -148,12 +161,14 @@ public struct Settings: Codable, Equatable, Sendable {
         fontSize = v(.fontSize, d.fontSize)
         terminalTheme = (try? c.decodeIfPresent(String.self, forKey: .terminalTheme)) ?? nil
         ghosttyConfigPath = (try? c.decodeIfPresent(String.self, forKey: .ghosttyConfigPath)) ?? nil
+        linkEditor = (try? c.decodeIfPresent(String.self, forKey: .linkEditor)) ?? nil
         gapsCatchClicks = v(.gapsCatchClicks, d.gapsCatchClicks)
         reattachSessions = v(.reattachSessions, d.reattachSessions)
         resumeClaude = v(.resumeClaude, d.resumeClaude)
         shortcuts = v(.shortcuts, d.shortcuts)
         checkUpdates = v(.checkUpdates, d.checkUpdates)
         showStartHint = v(.showStartHint, d.showStartHint)
+        setupOffered = v(.setupOffered, d.setupOffered)
     }
 }
 

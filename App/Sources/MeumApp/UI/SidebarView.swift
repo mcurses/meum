@@ -92,8 +92,8 @@ struct SidebarDisplay: Equatable {
         icons = s.sidebarShowIcons
     }
 
-    /// Where a row's name and second line start: after the colour stripe, and after the icon when it is shown.
-    var textInset: CGFloat { icons ? 42 : 16 }
+    /// Where a row's name and second line start: after the colour stripe, or after the icon, which replaces it.
+    var textInset: CGFloat { icons ? 36 : 16 }
 
     func hasSubtitle(_ i: SidebarItem) -> Bool {
         (branch && i.branch != nil) || (directory && i.directory != nil) || (status && !i.status.isEmpty)
@@ -508,18 +508,20 @@ final class SidebarView: FlippedView, NSTextFieldDelegate {
             NSColor(white: 1, alpha: 0.06).setFill()
             NSBezierPath(roundedRect: r, xRadius: 7, yRadius: 7).fill()
         }
-        // colour stripe
-        let stripe = NSRect(x: r.minX + 6, y: r.minY + 7, width: 3, height: r.height - 14)
-        (Self.nsColor(hex: item.color) ?? NSColor(white: 1, alpha: 0.18)).setFill()
-        NSBezierPath(roundedRect: stripe, xRadius: 1.5, yRadius: 1.5).fill()
+        // colour stripe, unless the icon tile shows the colour
+        if !display.icons {
+            let stripe = NSRect(x: r.minX + 6, y: r.minY + 7, width: 3, height: r.height - 14)
+            (Self.nsColor(hex: item.color) ?? NSColor(white: 1, alpha: 0.18)).setFill()
+            NSBezierPath(roundedRect: stripe, xRadius: 1.5, yRadius: 1.5).fill()
+        }
 
         // first line: name, agent dots, ⌘N hint; second line (if any): branch and status entries
         let sub = display.hasSubtitle(item)
         let midY = sub ? r.minY + 14 : r.midY
         if display.icons {
-            // the rail's tile, smaller: the icon on the workspace's colour, centred on the row
+            // the rail's tile, smaller: the icon on the workspace's colour, in place of the stripe
             let side: CGFloat = 22
-            let tile = NSRect(x: r.minX + 14, y: r.midY - side / 2, width: side, height: side)
+            let tile = NSRect(x: r.minX + 7, y: r.midY - side / 2, width: side, height: side)
             (Self.nsColor(hex: item.color)?.withAlphaComponent(0.35) ?? NSColor(white: 1, alpha: 0.1)).setFill()
             NSBezierPath(roundedRect: tile, xRadius: 6, yRadius: 6).fill()
             Self.drawIcon(item.icon.flatMap(WorkspaceIcon.init) ?? WorkspaceIcon.fallback(forName: item.name),

@@ -11,7 +11,8 @@ what would break their users. scripts/release.sh --publish runs it.
       does not implement it, and meum's first call to it would trap); --allow-break lets it through
     - other new declarations: listed; widgets/MINIMUM_MEUM must then name the version being released, so the
       catalog's minMeum keeps widgets that use them away from older meums
-  The control API (docs/api.md, generated): a method or event of the release that is gone is refused.
+  The control API (docs/api.md, generated): a method or event of the release that is gone is refused; --allow-break
+  lets a deliberate removal through (api.md then says what replaces it).
 
 Usage: scripts/interface-diff <version being released> [<ref>] [--allow-break]
        scripts/interface-diff --self-test        (the comparison against fixtures; also runs before every check)
@@ -182,7 +183,9 @@ def main():
         new_api = open(os.path.join(ROOT, "docs/api.md")).read()
         api = lambda t: set(re.findall(r"^- `([\w.]+)`:", t, re.M))
         gone = sorted(api(old_api) - api(new_api))
-        if gone:
+        if gone and allow_break:
+            print("interface-diff: control API methods or events removed on purpose (--allow-break): " + ", ".join(gone))
+        elif gone:
             problems.append("control API methods or events of the last release are gone: " + ", ".join(gone))
         else:
             print("interface-diff: control API keeps every method and event")

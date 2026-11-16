@@ -73,6 +73,14 @@ final class AppAPI {
         }
     }
 
+    /// `widget.offer`: the copy and the checks run off the main thread (a large folder must not stall the window).
+    func handleOffer(_ p: JSON) async throws -> JSON {
+        guard let path = nonEmpty(p["path"]?.stringValue), path.hasPrefix("/") else {
+            throw ControlError.invalidParams("needs 'path', the absolute path of a .meumwidget folder")
+        }
+        return try await control.installer.offer(path: path)
+    }
+
     func handleLibrary(method: String, params p: JSON) async throws -> JSON {
         let installer = control.installer
         do {
@@ -268,12 +276,6 @@ final class AppAPI {
         case MeumMethod.tabClose:
             let (_, tab) = try self.tab(p)
             controller.closeTab(tab.id)
-            return .null
-
-        case MeumMethod.tabSendText:
-            let (_, tab) = try self.tab(p)
-            guard let text = p["text"]?.stringValue else { throw ControlError.invalidParams("needs 'text'") }
-            try sendText(text, to: tab)
             return .null
 
         case MeumMethod.tabMove:
@@ -504,18 +506,6 @@ final class AppAPI {
         return ["tab": .string(tab.id.uuidString), "card": .string(final?.id.uuidString ?? card.uuidString),
                 "index": .int(final?.tabs.firstIndex { $0.id == tab.id } ?? 0),
                 "workspace": .string(ws?.id.uuidString ?? "")]
-    }
-
-    /// Raw input into the tab's pty through zmx (works for tabs of hidden workspaces too, as long as their
-    /// session runs).
-    private func sendText(_ text: String, to tab: Tab) throws {
-        let name = controller.sessions.name(for: tab.id)
-        guard controller.sessions.list().contains(name) else {
-            throw ControlError.unavailable("tab \(tab.id.uuidString) has no running session yet (its workspace was never shown)")
-        }
-        guard ZmxSessions.run(binary: controller.sessions.binary, ["send", name, text]) != nil else {
-            throw ControlError.internalError("zmx send failed")
-        }
     }
 
     // MARK: references

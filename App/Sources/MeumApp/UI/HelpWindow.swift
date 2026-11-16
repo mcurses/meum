@@ -67,6 +67,14 @@ struct HelpView: View {
                 }
                 .id(HelpWindowController.Topic.start.rawValue)
 
+                Section("Links in terminals") {
+                    bullet("Hold ⌘ over a web address, a file path (with :line:column) or a folder: it is underlined, and a line at the bottom says what a click does.")
+                    bullet("⌘-click opens it: a web page in your browser (a local one, such as localhost, in a browser tab beside the terminal), a file in its app or editor at the line, a folder in Finder. A click never runs a script or an app; those open as text or show in Finder.")
+                    bullet("⇧⌘-click does the other thing: a web page beside the terminal (or a local one in your browser), a file shown in Finder, a new terminal tab in a folder.")
+                    bullet("Right-click a link for both, plus Copy. Terminal ▸ Open Link… (⇧⌘O) puts a letter on every link on screen: type it to open the link, ⇧ and the letter for the other action, Esc to cancel.")
+                    bullet("Relative paths are looked up from the terminal's folder, then from Claude's. Settings ▸ Terminal ▸ Open files in picks the editor for text files.")
+                }
+
                 Section("What the dots and labels mean") {
                     bullet("The dots need meum's Claude hooks (Settings ▸ Claude hooks ▸ Install).")
                     legend(.systemOrange, "Claude is waiting for you: a permission or a question")
@@ -99,6 +107,7 @@ struct HelpView: View {
                     bullet("Any program running as you can use meum through its control socket: open tabs, type or paste into terminals, set labels and status. The socket is only open to your user:")
                     Text(socket).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
                     bullet("Another app can bring a Claude session's tab to the front with the link meum://focus?claude=ID, or with `meum tab focus --claude-id ID`. `meum tree` shows each session's id.")
+                    bullet("Any app can open a file in its default app with the link meum://open?path=/absolute/path (a button on a web page that opens a local brief in your Markdown reader, say), but only when the file lies in a folder listed under Settings ▸ Folders that links may open and has one of the allowed suffixes (md, txt, pdf unless you change them).")
                     if let copied { Text("Copied the \(copied) to the clipboard.").font(.caption).foregroundStyle(.secondary) }
                 }
                 .id(HelpWindowController.Topic.cli.rawValue)
@@ -108,7 +117,8 @@ struct HelpView: View {
                     bullet("2. End the terminals: close their tabs, or turn off Settings ▸ Behaviour ▸ Reattach running sessions on launch and start meum once more.")
                     bullet("3. Quit meum and move meum.app to the Trash.")
                     bullet("4. Delete ~/.local/state/meum, ~/.local/share/meum and ~/.local/bin/meum-hook.")
-                    bullet("If you added the MCP server: `claude mcp remove --scope user meum`.")
+                    bullet("If you added the MCP server (Help ▸ Set Up for Claude Code… does): `claude mcp remove --scope user meum`, once per Claude profile.")
+                    bullet("If meum linked its command into your shells: delete ~/.local/bin/meum.")
                 }
                 .id(HelpWindowController.Topic.uninstall.rawValue)
             }

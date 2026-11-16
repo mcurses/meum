@@ -389,6 +389,10 @@ final class WidgetManager {
         scan().first { $0.id == id || $0.folder.deletingPathExtension().lastPathComponent == id }
     }
 
+    /// The installed widget whose manifest id is `id`, never one that only has a folder of that name (offers: an
+    /// offered id must not reach another widget through its folder name).
+    func entry(manifestID id: String) -> Entry? { scan().first { $0.id == id } }
+
     /// The view of a widget tab, making its widget instance the first time.
     func tileView(tab: UUID, widget id: String) -> NSView {
         if let t = tiles[tab] { return t.container }

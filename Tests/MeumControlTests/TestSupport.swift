@@ -107,7 +107,7 @@ final class FakeHandler: ControlHandler, @unchecked Sendable {
         case "tab.paste": return ["tab": params["tab"] ?? .null]
         case "widget.list": return widgetList
         case "tab.focused": return ["workspace": .string(Self.wsA), "tab": .string(Self.tab1), "widget": .null]
-        case "workspace.select", "workspace.rename", "workspace.close", "tab.select", "tab.close", "tab.sendText",
+        case "workspace.select", "workspace.rename", "workspace.close", "tab.select", "tab.close",
              "status.set", "status.clear", "notify", "workspace.markRead", "tab.move", "split.resize":
             return .null
         case "agent.hook":

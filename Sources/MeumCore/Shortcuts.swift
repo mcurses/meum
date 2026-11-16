@@ -118,6 +118,7 @@ public enum Shortcuts {
             .init("closeTab", "Close Tab", "Terminal", "cmd+w"),
             .init("previousTab", "Previous Tab", "Terminal", "cmd+["),
             .init("nextTab", "Next Tab", "Terminal", "cmd+]"),
+            .init("openLink", "Open Link…", "Terminal", "shift+cmd+o"),
         ]
         for d in ["Left", "Up", "Right", "Down"] {
             a.append(.init("focus\(d)", "Focus Card \(d)", "Terminal", "opt+cmd+\(d.lowercased())"))

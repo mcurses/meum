@@ -36,6 +36,13 @@ final class AppSettings: ObservableObject {
         return SettingsJSON.value(value, key) ?? .null
     }
 
+    /// Records that the first-launch sheet was shown (no control API key; nothing else sets it).
+    func markSetupOffered() {
+        var next = value
+        next.setupOffered = true
+        commit(next)
+    }
+
     private func commit(_ next: Settings) {
         guard next != value else { return }
         let old = value

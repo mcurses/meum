@@ -27,7 +27,7 @@ final class MainMenu: NSObject {
         app.addItem(.separator())
         app.addItem(withTitle: "Hide \(Product.name)", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         app.addItem(.separator())
-        app.addItem(withTitle: "Quit \(Product.name)", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        app.addItem(withTitle: "Quit \(Product.name)", action: #selector(quit), keyEquivalent: "q").target = self
         add(app, to: main)
 
         let edit = NSMenu(title: "Edit")
@@ -69,6 +69,7 @@ final class MainMenu: NSObject {
         term.addItem(.separator())
         item(term, "Previous Tab", "previousTab", #selector(prevTab))
         item(term, "Next Tab", "nextTab", #selector(nextTab))
+        item(term, "Open Link…", "openLink", #selector(openLink))
         term.addItem(.separator())
         let dirs: [(String, Direction)] = [("Left", .left), ("Up", .up), ("Right", .right), ("Down", .down)]
         for (name, d) in dirs {
@@ -97,6 +98,8 @@ final class MainMenu: NSObject {
             mi.target = self
             mi.representedObject = topic.rawValue
         }
+        let setup = help.addItem(withTitle: "Set Up for Claude Code…", action: #selector(openSetup), keyEquivalent: "")
+        setup.target = self
         let mcp = help.addItem(withTitle: "Copy the Claude Code Setup Command", action: #selector(copyMCPCommand), keyEquivalent: "")
         mcp.target = self
         help.addItem(.separator())
@@ -180,6 +183,10 @@ final class MainMenu: NSObject {
     /// Opens the help window at a topic, and the settings window at a section (set by the app delegate).
     var onHelp: ((HelpWindowController.Topic) -> Void)?
     var onSettingsSection: ((String) -> Void)?
+    /// Opens the first-launch setup sheet again.
+    var onSetup: (() -> Void)?
+    @objc func openSetup() { onSetup?() }
+    @objc func quit() { AppQuit.now() }
     @objc func openHelp(_ s: NSMenuItem) {
         if let t = (s.representedObject as? String).flatMap(HelpWindowController.Topic.init(rawValue:)) { onHelp?(t) }
     }
@@ -217,6 +224,7 @@ final class MainMenu: NSObject {
     }
     @objc func prevTab() { controller.selectAdjacentTab(-1) }
     @objc func nextTab() { controller.selectAdjacentTab(1) }
+    @objc func openLink() { if !controller.showLinkHints() { NSSound.beep() } }
     @objc func focusCard(_ s: NSMenuItem) {
         if let d = (s.representedObject as? String).flatMap(Direction.init(rawValue:)) { controller.moveFocus(d) }
     }

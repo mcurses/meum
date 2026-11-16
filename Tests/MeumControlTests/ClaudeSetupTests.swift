@@ -92,6 +92,20 @@ final class ClaudeSetupTests: XCTestCase {
         XCTAssertEqual(ClaudeSetup(home: home, cli: cli).needHooks(), [])
     }
 
+    func testOnlyAnInstalledMeumRegistersItsCLI() {
+        XCTAssertTrue(ClaudeSetup.isInstalledCLI("/Applications/meum.app/Contents/Resources/bin/meum", home: "/Users/a"))
+        XCTAssertTrue(ClaudeSetup.isInstalledCLI("/Users/a/Applications/meum.app/Contents/Resources/bin/meum", home: "/Users/a"))
+        XCTAssertFalse(ClaudeSetup.isInstalledCLI("/Volumes/meum/meum.app/Contents/Resources/bin/meum", home: "/Users/a"))
+        XCTAssertFalse(ClaudeSetup.isInstalledCLI("/Users/a/code/meum/build/meum.app/Contents/Resources/bin/meum", home: "/Users/a"))
+        let s = ClaudeSetup(home: home, cli: cli)
+        let shell = ClaudeSetup.Shell(claude: "/bin/claude", path: [home + "/.local/bin"])
+        XCTAssertEqual(s.offers(shell: shell, installedCLI: false).map(\.step), [.hooks])
+    }
+
+    func testParseProbeDropsRelativeEntries() {
+        XCTAssertEqual(ClaudeSetup.parseProbe("__meum_probe__.:bin:/usr/bin\n", isExecutable: { _ in false }).path, ["/usr/bin"])
+    }
+
     func testParseProbeSkipsShellNoise() {
         let s = ClaudeSetup.parseProbe("Welcome!\n__meum_probe__/a:/b\n", isExecutable: { $0 == "/b/claude" })
         XCTAssertEqual(s, .init(claude: "/b/claude", path: ["/a", "/b"]))

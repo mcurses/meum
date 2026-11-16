@@ -1,0 +1,118 @@
+# Builds, signs and notarizes meum on a version tag and publishes the GitHub release with the DMG (what running
+# copies update from), with docs/releases/<version>.md as its text.
+#
+# The tag comes from `scripts/release.sh <version> --tag` on the maintainer's Mac: it runs the release checks (zmx
+# wire protocol, MeumKit interface, the release gate) and pushes the release commit and its tag. Nothing here repeats
+# those checks; it builds exactly the tagged tree with scripts/release.sh, the same script that remains the fallback
+# for a release made entirely on the Mac (`scripts/release.sh <version> --publish`).
+#
+# The signing secrets reach only the two steps of our own shell code that need them: the check that they are set,
+# and the step that imports the certificate into a throwaway keychain, signs, notarizes and deletes the keychain.
+# The build and the API smoke test run before, without them; third-party actions are pinned to a commit.
+#
+# Repository secrets (all six needed; without them the run stops before building):
+#   MACOS_CERTIFICATE_P12        base64 of the Developer ID Application .p12
+#   MACOS_CERTIFICATE_PASSWORD   password of that .p12
+#   MACOS_SIGN_IDENTITY          e.g. "Developer ID Application: Name (TEAMID)"
+#   APPLE_ID / APPLE_TEAM_ID / APPLE_APP_PASSWORD   for notarytool
+name: Release
+
+# Unused while releases are built on the maintainer's Mac (`scripts/release.sh <version> --publish`): the tag that
+# script pushes must not start a run that fails at the secrets check. Put the tag trigger back once the signing
+# secrets are set; a manual run needs the tag's ref selected.
+on:
+  workflow_dispatch:
+  # push:
+  #   tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build, sign, notarize and publish (Apple Silicon)
+    runs-on: macos-26
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Check the tag, the notes and the secrets
+        id: version
+        env:
+          MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          [ "$(cat VERSION)" = "$VERSION" ] || { echo "::error::VERSION says $(cat VERSION), the tag $GITHUB_REF_NAME"; exit 1; }
+          [ -f "docs/releases/$VERSION.md" ] || { echo "::error::no release notes docs/releases/$VERSION.md"; exit 1; }
+          for s in MACOS_CERTIFICATE_P12 MACOS_CERTIFICATE_PASSWORD MACOS_SIGN_IDENTITY APPLE_ID APPLE_TEAM_ID APPLE_APP_PASSWORD; do
+            [ -n "$(printenv "$s")" ] || { echo "::error::repository secret $s is not set"; exit 1; }
+          done
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29  # v2.2.1
+        with:
+          version: 0.17.1
+
+      - name: Toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+          zig version
+          xcrun -f metal >/dev/null 2>&1 || xcodebuild -downloadComponent MetalToolchain
+
+      - name: Build and smoke-test (no secrets)
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -o pipefail
+          scripts/setup.sh
+          scripts/setup.sh --release
+          MEUM_VERSION="$VERSION" MEUM_URL_SCHEME=1 scripts/build-app.sh release
+          scripts/api-smoke
+
+      - name: Sign and notarize (the only step with the certificate)
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MEUM_RELEASE_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          set -o pipefail
+          KEYCHAIN="$RUNNER_TEMP/build.keychain-db"
+          KEYCHAIN_PW="$(openssl rand -hex 16)"
+          # the keychain and the .p12 are gone when this step ends, however it ends
+          trap 'security delete-keychain "$KEYCHAIN" 2>/dev/null; rm -f "$RUNNER_TEMP/cert.p12"' EXIT
+          echo "$MACOS_CERTIFICATE_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/cert.p12" -P "$MACOS_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign -t cert -f pkcs12 -k "$KEYCHAIN"
+          rm -f "$RUNNER_TEMP/cert.p12"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PW" "$KEYCHAIN" >/dev/null
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
+          scripts/release.sh "$VERSION" --prebuilt 2>&1 | grep -v 'replacing existing signature'
+
+      - name: Upload DMG artifact
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: meum-${{ steps.version.outputs.version }}-arm64
+          path: build/release/meum-*.dmg
+          if-no-files-found: ignore
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" "build/release/meum-$VERSION-arm64.dmg" -R "$GITHUB_REPOSITORY" \
+            --verify-tag --title "meum $VERSION" --notes-file "docs/releases/$VERSION.md"

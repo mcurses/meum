@@ -73,7 +73,7 @@ final class WidgetHelpers {
     }
 
     /// A helper command that stays inside the widget folder: relative, without `..`.
-    static func isInsideFolder(_ command: String) -> Bool {
+    nonisolated static func isInsideFolder(_ command: String) -> Bool {
         !command.hasPrefix("/") && !command.split(separator: "/").contains("..")
     }
 
@@ -82,12 +82,12 @@ final class WidgetHelpers {
     /// returned URL is the file itself, never a link to something else.
     /// Whether a copy just made is a regular file itself (lstat: a link is not), so it can't have been swapped for a
     /// link between `realFile`'s check and the copy.
-    static func isPlainFile(_ url: URL) -> Bool {
+    nonisolated static func isPlainFile(_ url: URL) -> Bool {
         var st = stat()
         return lstat(url.path, &st) == 0 && (st.st_mode & S_IFMT) == S_IFREG
     }
 
-    static func realFile(_ url: URL, inside folder: URL) -> URL? {
+    nonisolated static func realFile(_ url: URL, inside folder: URL) -> URL? {
         let real = url.resolvingSymlinksInPath()
         let base = folder.resolvingSymlinksInPath().path
         guard real.path.hasPrefix(base.hasSuffix("/") ? base : base + "/"),

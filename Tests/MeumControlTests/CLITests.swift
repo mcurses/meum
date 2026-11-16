@@ -147,14 +147,6 @@ final class CLITests: XCTestCase {
         XCTAssertEqual(lastCall?.params["tab"], .string(FakeHandler.tab2), "id prefix resolves via the tree, case-insensitively")
         XCTAssertEqual(meum(["tab", "close", FakeHandler.tab1]).code, 0)
         XCTAssertEqual(meum(["tab", "close", "ffff"]).code, 1)
-
-        XCTAssertEqual(meum(["tab", "send", "--enter", "AAAA", "ls -la"]).code, 0)
-        XCTAssertEqual(lastCall?.method, "tab.sendText")
-        XCTAssertEqual(lastCall?.params, ["tab": .string(FakeHandler.tab1), "text": "ls -la\r"])
-        _ = meum(["tab", "send", "AAAA", "-"], stdin: "from stdin\n")
-        XCTAssertEqual(lastCall?.params["text"], "from stdin\n")
-        _ = meum(["tab", "send", "AAAA", "--", "-dash"])
-        XCTAssertEqual(lastCall?.params["text"], "-dash")
     }
 
     func testTabFocusByClaudeID() throws {
@@ -386,9 +378,9 @@ final class CLITests: XCTestCase {
         XCTAssertTrue(ping.stdout.hasPrefix("ok meum ? (meum.v1)"), ping.stdout)
         let tree = TestSupport.run(bin, ["tree"], env: env)
         XCTAssertTrue(tree.stdout.contains("needs input"), tree.stdout)
-        let sent = TestSupport.run(bin, ["tab", "send", "--enter", "AAAA", "echo hi"], env: env)
+        let sent = TestSupport.run(bin, ["tab", "paste", "--submit", "AAAA", "echo hi"], env: env)
         XCTAssertEqual(sent.status, 0, sent.stderr)
-        XCTAssertEqual(lastCall?.params["text"], "echo hi\r")
+        XCTAssertEqual(lastCall?.params["text"], "echo hi")
         XCTAssertEqual(TestSupport.run(bin, ["ping"], env: ["HOME": home!, "MEUM_SOCKET": h.dir + "/x.sock"]).status, 3)
         XCTAssertEqual(TestSupport.run(bin, ["nonsense"], env: env).status, 2)
     }

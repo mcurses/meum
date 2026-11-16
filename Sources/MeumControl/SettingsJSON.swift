@@ -8,7 +8,8 @@
 //   background "glass"(="tint")|"vibrancy"|"liquid"|"solid", wallpaper bool (the pinned wallpaper under the material),
 //   liquidStyle "regular"|"clear", focusFrameSaturation 0…1 (focused card frame: 1 workspace colour, 0 grey),
 //   focusFrameOpacity 0…1, glassBlur 0…40, glassTint 0…1, solidColor "#rrggbb",
-//   fontFamily string|null, fontSize 6…48, terminalTheme string|null (a bundled Ghostty theme's name), ghosttyConfigPath string|null, gapsCatchClicks bool,
+//   fontFamily string|null, fontSize 6…48, terminalTheme string|null (a bundled Ghostty theme's name), ghosttyConfigPath string|null,
+//   linkEditor string|null (bundle id of the app ⌘-clicked files open in; null: each file's default app), gapsCatchClicks bool,
 //   reattachSessions bool, resumeClaude bool, sidebarCollapsed bool, checkUpdates bool (daily release check),
 //   showStartHint bool (the one-line hint at the bottom of the window, until closed),
 //   sidebarShowBranch, sidebarShowDirectory, sidebarShowStatus, sidebarShowMetadata, sidebarShowPorts, sidebarShowAgentDots,
@@ -20,6 +21,10 @@
 //   (the three widget* trust keys are read-only here: settings.set refuses them, Settings ▸ Widgets changes them)
 //   statusLinkSchemes [scheme…]   link schemes besides http(s) a status entry's click opens without asking; added
 //                               when the user says yes in meum, read-only here like the widget trust keys
+//   boardOpenFolders [absolute folder…]   folders a meum://open?path=… link may open files from (default none)
+//   boardOpenSuffixes [suffix…]   the suffixes it may open, lowercase without dot (default md, txt, pdf)
+//   (both are read-only here like the widget trust keys: settings.set refuses them, Settings ▸ "Folders that links may
+//   open" changes them)
 //   shortcuts {actionID: "cmd+shift+r" | null}   every action's combination in effect (null = none); setting it
 //                                               takes an object of the actions to change
 //   shortcut.<actionID> "cmd+shift+r" | "none" | null   one action; "none" removes its shortcut, null restores
@@ -34,11 +39,15 @@ public enum SettingsJSON {
     nonisolated(unsafe) public static var themeNames: (() -> [String])?
 
     public static let socketReadOnly: Set<String> = ["widgetDeveloperMode", "widgetTeamIDs", "widgetCatalogURL",
-                                                     "statusLinkSchemes"]
+                                                     "statusLinkSchemes", "boardOpenFolders", "boardOpenSuffixes"]
 
     /// The refusal a socket client gets for a read-only key.
     public static func socketRefusal(_ key: String) -> String {
-        key == "statusLinkSchemes"
+        if key == "boardOpenFolders" || key == "boardOpenSuffixes" {
+            return "'\(key)' can't be changed from a program: which folders and file types a meum://open link may "
+                + "open is the user's decision, made only in meum's Settings ▸ Folders that links may open"
+        }
+        return key == "statusLinkSchemes"
             ? "'statusLinkSchemes' can't be changed from a program: meum asks the user on the first click on a link of "
                 + "a new kind, so nothing running in a tab can allow one for itself"
             : trustRefusal("'\(key)'")
@@ -52,8 +61,8 @@ public enum SettingsJSON {
 
     public static let keys: [String] = [
         "cardGap", "cornerRadius", "sidebarWidth", "sidebarCollapsed", "widgetHeight", "widgetOrder", "widgetCatalogURL", "widgetTeamIDs", "widgetDeveloperMode", "background", "wallpaper", "liquidStyle", "focusFrameSaturation", "focusFrameOpacity", "glassBlur", "glassTint",
-        "solidColor", "fontFamily", "fontSize", "terminalTheme", "ghosttyConfigPath", "gapsCatchClicks", "reattachSessions",
-        "resumeClaude", "shortcuts", "checkUpdates", "showStartHint", "statusLinkSchemes",
+        "solidColor", "fontFamily", "fontSize", "terminalTheme", "ghosttyConfigPath", "linkEditor", "gapsCatchClicks", "reattachSessions",
+        "resumeClaude", "shortcuts", "checkUpdates", "showStartHint", "statusLinkSchemes", "boardOpenFolders", "boardOpenSuffixes",
     ] + sidebarShowKeys
 
     /// The sidebar row's show/hide switches.
@@ -90,6 +99,7 @@ public enum SettingsJSON {
         case "fontSize": return num(s.fontSize)
         case "terminalTheme": return str(s.terminalTheme)
         case "ghosttyConfigPath": return str(s.ghosttyConfigPath)
+        case "linkEditor": return str(s.linkEditor)
         case "gapsCatchClicks": return .bool(s.gapsCatchClicks)
         case "reattachSessions": return .bool(s.reattachSessions)
         case "resumeClaude": return .bool(s.resumeClaude)
@@ -105,6 +115,8 @@ public enum SettingsJSON {
         case "sidebarShowPin": return .bool(s.sidebarShowPin)
         case "sidebarShowIcons": return .bool(s.sidebarShowIcons)
         case "statusLinkSchemes": return .array(s.statusLinkSchemes.map { .string($0) })
+        case "boardOpenFolders": return .array(s.boardOpenFolders.map { .string($0) })
+        case "boardOpenSuffixes": return .array(s.boardOpenSuffixes.map { .string($0) })
         case "shortcuts":
             return .object(Dictionary(uniqueKeysWithValues: Shortcuts.actions.map { a in
                 (a.id, Shortcuts.combo(a.id, in: s).map { .string($0.text) } ?? .null)
@@ -208,6 +220,15 @@ public enum SettingsJSON {
             s.terminalTheme = name
         case "fontSize": s.fontSize = try number()
         case "ghosttyConfigPath": s.ghosttyConfigPath = try optionalString().map { ($0 as NSString).expandingTildeInPath }
+        case "linkEditor":
+            let id = try optionalString().flatMap { $0.isEmpty ? nil : $0 }
+            if let id, !id.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "." || $0 == "-") }) {
+                throw ControlError.invalidParams("'linkEditor' must be an app's bundle id (com.example.Editor) or null")
+            }
+            if let id, TerminalLinks.terminalApps.contains(id) {
+                throw ControlError.invalidParams("'linkEditor' must be an editor; a terminal app would run the files it opens")
+            }
+            s.linkEditor = id
         case "gapsCatchClicks": s.gapsCatchClicks = try bool()
         case "sidebarCollapsed": s.sidebarCollapsed = try bool()
         case "reattachSessions": s.reattachSessions = try bool()
@@ -229,6 +250,18 @@ public enum SettingsJSON {
                 throw ControlError.invalidParams("'statusLinkSchemes' needs a list of URL schemes other than http(s), file, shortcuts and x-apple.systempreferences (those are asked about every time)")
             }
             s.statusLinkSchemes = Array(NSOrderedSet(array: items)).compactMap { $0 as? String }
+        case "boardOpenFolders":
+            // reached by the Settings window only (the socket refuses the key before this)
+            guard let items = v.isNull ? [] : v.arrayValue?.compactMap(\.stringValue),
+                  items.allSatisfy({ $0.hasPrefix("/") }) else {
+                throw ControlError.invalidParams("'boardOpenFolders' needs a list of absolute folder paths")
+            }
+            s.boardOpenFolders = Array(NSOrderedSet(array: items)).compactMap { $0 as? String }
+        case "boardOpenSuffixes":
+            guard let items = v.isNull ? [] : v.arrayValue?.compactMap(\.stringValue) else {
+                throw ControlError.invalidParams("'boardOpenSuffixes' needs a list of suffixes")
+            }
+            s.boardOpenSuffixes = LinkOpen.normalizedSuffixes(items.joined(separator: " "))
         case "shortcuts":
             guard let o = v.objectValue else { throw ControlError.invalidParams("'shortcuts' needs an object {actionID: combination}") }
             for (id, c) in o { try setShortcut(&s, id: id, value: c) }

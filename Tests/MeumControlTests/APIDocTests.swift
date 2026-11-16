@@ -40,11 +40,16 @@ final class APIDocTests: XCTestCase {
         `{"id": 1, "error": {"code", "message"}}`. Error codes: `parse_error`, `invalid_request`, `method_not_found`,
         `invalid_params`, `not_found`, `conflict`, `unavailable`, `forbidden`, `internal`. `system.ping` lists the methods
         a running meum serves; a client should ask before it relies on a newer one. Changes are additions only: a new
-        method, a new optional parameter with a default, a new field in an answer.
+        method, a new optional parameter with a default, a new field in an answer. The one removal so far: 0.5.5 dropped
+        `tab.sendText` (keystrokes through zmx); `tab.paste` types into a tab.
 
         The app's bundle identifier `io.github.mcurses.meum` is part of `meum.v1`: tools find meum by it (to tell
         whether it is the app in front, say), and it stays the same across any rename of the app. So is the link
-        `meum://focus?claude=<session id>`: it does what `tab.select {claude, activate: true}` does, and nothing else.
+        `meum://focus?claude=<session id>`: it does what `tab.select {claude, activate: true}` does, and nothing else. The link
+        `meum://open?path=<absolute path, percent-encoded>` opens that file in its default app, without bringing meum
+        forward, and only when the file (symlinks resolved) lies under a folder the user listed in Settings ▸ "Folders that
+        links may open" and has an allowed suffix (default `md`, `txt`, `pdf`); anything else is refused with one log
+        line. `boardOpenFolders` and `boardOpenSuffixes` can be read with `settings.get` but not set over the socket.
 
         ## Methods
 

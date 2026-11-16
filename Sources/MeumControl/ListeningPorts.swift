@@ -65,19 +65,29 @@ public enum ListeningPorts {
         return found.sorted()
     }
 
-    /// For each key, the ports its process tree listens on (sorted, distinct; keys without any are left out).
+    /// Agents whose own listeners are left out (Codex keeps a private localhost service in every session); what they
+    /// start, a dev server say, still counts.
+    public static let agentNames: Set<String> = ["codex", "claude"]
+
+    /// For each key, the ports its process tree listens on (sorted, distinct; keys without any are left out), without
+    /// the agents' own listeners.
     public static func byRoot<K: Hashable>(_ roots: [K: pid_t]) -> [K: [Int]] {
         guard !roots.isEmpty else { return [:] }
-        let parents = parents()
+        return collect(roots, parents: parents(), ports: ports(of:), skip: { name(of: $0).map(agentNames.contains) ?? false })
+    }
+
+    /// `byRoot` on given lookups: processes `skip` names contribute no ports, their descendants still do.
+    static func collect<K: Hashable>(_ roots: [K: pid_t], parents: [pid_t: pid_t], ports: (pid_t) -> [Int],
+                                     skip: (pid_t) -> Bool) -> [K: [Int]] {
         var cache: [pid_t: [Int]] = [:]
         var out: [K: [Int]] = [:]
         for (key, root) in roots {
-            var ports: Set<Int> = []
+            var found: Set<Int> = []
             for p in tree(of: root, parents: parents) {
-                if cache[p] == nil { cache[p] = Self.ports(of: p) }
-                ports.formUnion(cache[p]!)
+                if cache[p] == nil { cache[p] = skip(p) ? [] : ports(p) }
+                found.formUnion(cache[p]!)
             }
-            if !ports.isEmpty { out[key] = ports.sorted() }
+            if !found.isEmpty { out[key] = found.sorted() }
         }
         return out
     }

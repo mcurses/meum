@@ -8,11 +8,16 @@ a request `{"id": 1, "method": "workspace.list", "params": {…}}` gets `{"id": 
 `{"id": 1, "error": {"code", "message"}}`. Error codes: `parse_error`, `invalid_request`, `method_not_found`,
 `invalid_params`, `not_found`, `conflict`, `unavailable`, `forbidden`, `internal`. `system.ping` lists the methods
 a running meum serves; a client should ask before it relies on a newer one. Changes are additions only: a new
-method, a new optional parameter with a default, a new field in an answer.
+method, a new optional parameter with a default, a new field in an answer. The one removal so far: 0.5.5 dropped
+`tab.sendText` (keystrokes through zmx); `tab.paste` types into a tab.
 
 The app's bundle identifier `io.github.mcurses.meum` is part of `meum.v1`: tools find meum by it (to tell
 whether it is the app in front, say), and it stays the same across any rename of the app. So is the link
-`meum://focus?claude=<session id>`: it does what `tab.select {claude, activate: true}` does, and nothing else.
+`meum://focus?claude=<session id>`: it does what `tab.select {claude, activate: true}` does, and nothing else. The link
+`meum://open?path=<absolute path, percent-encoded>` opens that file in its default app, without bringing meum
+forward, and only when the file (symlinks resolved) lies under a folder the user listed in Settings ▸ "Folders that
+links may open" and has an allowed suffix (default `md`, `txt`, `pdf`); anything else is refused with one log
+line. `boardOpenFolders` and `boardOpenSuffixes` can be read with `settings.get` but not set over the socket.
 
 ## Methods
 
@@ -36,7 +41,7 @@ whether it is the app in front, say), and it stays the same across any rename of
 - `workspace.setColor`: `{id, color}`: `#rrggbb`, or null to clear.
 - `workspace.setIcon`: `{id, icon}`: an emoji or up to two characters, `sf:<symbol>`, or null / "none" to clear.
 - `workspace.setLabels`: `{id, labels: [string]}`: chips on the workspace's sidebar row (at most 4, 24 characters each; empty clears).
-- `workspace.setMeta`: `{id, key, value | null}` sets or removes one label; `{id, metadata: {key: value | null}}` several.
+- `workspace.setMeta`: `{id, key, value | null}` sets or removes one label; `{id, metadata: {key: value | null}}` several. Frozen since 0.5.5: kept as is, not grown.
 - `workspace.setGroup`: `{id | ids: [ws…], group | null}`: into a group (at its end), or out of theirs.
 - `workspace.pin`: `{id, pinned?}` (default true): a pinned workspace stays at the top of the sidebar.
 - `workspace.markRead`: `{id}`: marks every Claude session in the workspace read (blue dots go grey).
@@ -59,7 +64,6 @@ whether it is the app in front, say), and it stays the same across any rename of
 - `tab.new`: `{workspace?, card?, cwd?, command?, split?: "right"|"down", widget?, config?}` -> `{id, workspace, card}`: a terminal tab, in `card` (default the focused card) or in a new card split off it.
 - `tab.select`: `{tab | claude, activate?}`: shows the tab (and its workspace). `claude` names the tab by the Claude Code session running in it (its session id, or a unique prefix of 8 or more characters); `activate: true` also brings meum to the front, for a click in another app.
 - `tab.close`: `{tab}`: closes the tab and ends its terminal.
-- `tab.sendText`: `{tab, text}`: typed into the tab's terminal as keystrokes; a newline submits.
 - `tab.focused`: `{}` -> `{workspace, tab, widget, name, labels}`: the selected workspace's id and its focused tab (a terminal or a widget tab; `widget` is the widget id, null for a terminal); `name` is the Claude Code session's own name, null without one; `labels` the labels that session set on its tab (`tab.setLabels`, empty without).
 - `tab.setLabels`: `{tab, labels: [string]}` -> `{tab, labels}`: short labels an agent attaches to its session (at most 4, each at most 24 characters), shown as chips on its tab and workspace row; an empty list clears them. They belong to the tab's Claude session and are dropped when it ends; a tab without one answers `unavailable`.
 - `tab.paste`: `{tab, text, submit?}` -> `{tab, submitted}`: text pasted into a tab's terminal as a paste (bracketed when its program enabled mode 2004), wherever that tab is; no focus change, no clipboard. `submit: true` presses Return after the text on the same path, so it can't overtake it (meum before 0.5 ignores it and omits `submitted`). Errors: not_found (no such tab), unavailable (a widget tab, or a terminal not attached yet: its workspace was not shown since meum started).
@@ -71,7 +75,7 @@ whether it is the app in front, say), and it stays the same across any rename of
 
 ### settings
 
-- `settings.get`: `{key?}` -> `{settings, path}` or `{key, value}`. Keys and ranges: SettingsJSON.swift.
+- `settings.get`: `{key?}` -> `{settings, path}` or `{key, value}`. Keys and ranges: SettingsJSON.swift. The look's tuning keys (cardGap, cornerRadius, liquidStyle, focusFrameSaturation, focusFrameOpacity, glassBlur, glassTint, solidColor, background) and the sidebar's sidebarShowMetadata and sidebarShowIcons are frozen since 0.5.5: kept, and no new tuning key is added. boardOpenFolders and boardOpenSuffixes (what a meum://open link may open) are readable here and refused by settings.set.
 - `settings.set`: `{key, value}` -> `{key, value}` (the stored value); publishes `settings.changed`. The widget trust keys are read-only here (`forbidden`).
 
 ### status
@@ -91,6 +95,7 @@ whether it is the app in front, say), and it stays the same across any rename of
 - `widget.update`: `{id}` -> like `widget.list`. Installs the catalog's newer version (async).
 - `widget.remove`: `{id, data?}` -> like `widget.list`. Removes the widget (with `data: true` also its data folder).
 - `widget.allow`: `{id}` -> always `forbidden`: trusting a widget is done in Settings ▸ Widgets only (meum opens it there).
+- `widget.offer`: `{path}` -> `{state: "offered"|"installed"|"refused", id?, team?, reason?}`. Another program offers a signed `.meumwidget` folder; meum checks it and asks the person with a card under the sidebar, and installs it itself on their Install. Nothing is copied or trusted by the call. The outcome shows later in `widget.list`.
 
 ### app
 
@@ -99,7 +104,7 @@ whether it is the app in front, say), and it stays the same across any rename of
 
 ### agent
 
-- `agent.hook`: `{tab, configDir?, payload}`: one Claude Code hook event, as `meum-hook` sends it; drives the agent dots.
+- `agent.hook`: `{tab, tty?, configDir?, projectDir?, payload}`: one Claude Code hook event, as `meum-hook` sends it; drives the agent dots. `projectDir` is the folder the session was started in, where a resume after a reboot starts it again. `tty` is the terminal the hook ran on; when it isn't the tab's own (the pty of its zmx session) the answer is `{outcome: "foreign"}` and nothing is recorded.
 
 ### events
 

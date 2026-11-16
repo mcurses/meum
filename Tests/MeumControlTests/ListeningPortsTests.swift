@@ -36,4 +36,15 @@ final class ListeningPortsTests: XCTestCase {
         XCTAssertEqual(ListeningPorts.tree(of: 2, parents: parents), [2, 3, 4])
         XCTAssertEqual(ListeningPorts.tree(of: 7, parents: parents), [7])
     }
+
+    func testAgentsOwnPortsAreSkippedButTheirChildrensCount() {
+        // 1 shell -> 2 agent (own service on 50000) -> 3 dev server on 3000; 4 a plain listener on 8080
+        let parents: [pid_t: pid_t] = [2: 1, 3: 2, 4: 1]
+        let ports: [pid_t: [Int]] = [2: [50000], 3: [3000], 4: [8080]]
+        let found = ListeningPorts.collect(["ws": pid_t(1)], parents: parents, ports: { ports[$0] ?? [] },
+                                           skip: { $0 == 2 })
+        XCTAssertEqual(found["ws"], [3000, 8080])
+        // an agent alone leaves the workspace without ports
+        XCTAssertNil(ListeningPorts.collect(["ws": pid_t(2)], parents: [:], ports: { ports[$0] ?? [] }, skip: { $0 == 2 })["ws"])
+    }
 }

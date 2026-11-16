@@ -53,6 +53,12 @@ final class SurfaceView: NSView {
     var pointerInside = false
     var lastReportedMousePoint: NSPoint?
     var trackingArea: NSTrackingArea?
+    // links (SurfaceView+Links.swift)
+    weak var linkHost: SurfaceLinkHost?
+    var linkHover: LinkHoverView?
+    var linkUnderline: LinkUnderlineView?
+    var hoverRaw: String?
+    var swallowMouseUp = false
 
     init(tabID: UUID, workingDirectory: String, command: String?, env: [String: String]) {
         self.tabID = tabID

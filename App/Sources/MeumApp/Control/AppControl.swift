@@ -54,6 +54,8 @@ final class AppControl {
     init(controller: WorkspaceController) {
         self.controller = controller
         agents = AgentService(bus: bus)
+        let terminals = TabTerminals(sessions: controller.sessions)
+        agents.originCheck = { tab, tty in terminals.accepts(tab: tab, tty: tty) }
         agentSource = LiveAgentStateSource(service: agents)
         notifier = Notifier()
         notifier.onOpen = { [weak controller] tab in
@@ -70,6 +72,7 @@ final class AppControl {
             do { try self?.settings?.set(key, value) } catch { Log.error("setting \(key): \(error)") }
         }
         agentSource.onChange = { [weak controller] in controller?.refreshChrome() }
+        controller.onResumed = { [weak self] tab, sid in self?.agents.resuming(tab: tab.uuidString, sessionID: sid) }
         controller.onStatusClicked = { [weak self] ws, key, entry in
             self?.bus.publish("status.clicked", ["workspace": .string(ws.uuidString), "key": .string(key),
                                                  "value": .string(entry.value), "url": entry.url.map { .string($0) } ?? .null])
@@ -94,7 +97,10 @@ final class AppControl {
         refreshPorts()
         restoreAgents()
         portTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.refreshPorts() }
+            MainActor.assumeIsolated {
+                self?.refreshPorts()
+                self?.agents.checkStarting()
+            }
         }
         silentTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.refreshSilentAgents() }
@@ -149,6 +155,10 @@ final class AppControl {
         var p = params.objectValue ?? [:]
         p["tab"] = .string(tabID.uuidString)
         let result = try agents.handleHook(params: .object(p))
+        if result["outcome"]?.stringValue == "foreign" {
+            Log.info("agent.hook for tab \(tabID.uuidString.prefix(8)) from terminal '\(params["tty"]?.stringValue ?? "")', not the tab's: ignored")
+            return result
+        }
         let payload = params["payload"] ?? .null
         let event = payload["hook_event_name"]?.stringValue
         let current = controller.store.state.workspace(containingTab: tabID)?.tab(tabID)?.agent
@@ -174,7 +184,8 @@ final class AppControl {
             // labels belong to the session: a new session in the tab starts without
             let snap = AgentSnapshot(sessionID: st.sessionID, configDir: st.configDir,
                                      transcriptPath: st.transcriptPath, cwd: st.cwd, name: known,
-                                     labels: same ? current?.labels : nil)
+                                     labels: same ? current?.labels : nil,
+                                     projectDir: st.projectDir ?? (same ? current?.projectDir : nil))
             if snap != current {
                 if !same, let current, let l = current.labels {
                     Self.logChipDrop(tabID, current.sessionID, l, "another session (\(st.sessionID)) reported from the tab, \(event ?? "?")")
@@ -274,7 +285,8 @@ final class AppControl {
                 else { continue }
                 restored[tab.uuidString] = AgentState(sessionID: snap.sessionID, configDir: snap.configDir,
                                                       transcriptPath: snap.transcriptPath, cwd: snap.cwd,
-                                                      phase: .idle, unread: false, updatedAt: now)
+                                                      phase: .idle, unread: false, updatedAt: now,
+                                                      projectDir: snap.projectDir)
             }
             Log.info("agents: restored \(restored.count) of \(candidates.count) Claude session(s) after launch")
             service.restore(restored)
@@ -383,6 +395,8 @@ struct ControlBridge: ControlHandler {
         switch method {
         case MeumMethod.widgetSend, MeumMethod.widgetScreenshot:
             return try await api.handleAsync(method: method, params: params)   // the widget answers later
+        case MeumMethod.widgetOffer:
+            return try await api.handleOffer(params)
         case MeumMethod.updateCheck, MeumMethod.updateInstall:
             return try await api.handleUpdate(method: method, params: params)
         case _ where MeumMethod.widgetAsync.contains(method):
@@ -429,10 +443,21 @@ final class LiveAgentStateSource: AgentStateSource {
 }
 
 /// Resumes a Claude Code session in a tab whose zmx session is gone (after a reboot).
+/// It resumes in the folder the session was started in (Claude Code looks a session up by that folder); for a
+/// snapshot saved before meum learned that folder, the transcript's first `cwd` tells it. A session whose transcript
+/// is gone is not resumed: the tab says so and opens a shell.
 final class ClaudeResumeProvider: ResumeProvider {
-    func resumeCommand(for snapshot: AgentSnapshot, tab: Tab) -> String? {
-        ResumeCommand.build(ResumeInfo(sessionID: snapshot.sessionID, configDir: snapshot.configDir,
-                                       cwd: snapshot.cwd ?? tab.cwd))
+    func resumeCommand(for snapshot: AgentSnapshot, tab: Tab) -> ResumeStart? {
+        var info = ResumeInfo(sessionID: snapshot.sessionID, configDir: snapshot.configDir,
+                              cwd: snapshot.cwd ?? tab.cwd, projectDir: snapshot.projectDir)
+        if let t = snapshot.transcriptPath, !t.isEmpty {
+            guard FileManager.default.fileExists(atPath: t) else {
+                Log.info("tab \(tab.id): transcript of session \(snapshot.sessionID) is gone, not resuming")
+                return ResumeStart(command: ResumeCommand.notFound(info), startsAgent: false)
+            }
+            if info.projectDir == nil { info.projectDir = ResumeCommand.transcriptCwd(path: t) }
+        }
+        return ResumeStart(command: ResumeCommand.build(info))
     }
 }
 
@@ -496,3 +521,30 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate, @unchecked Sen
         completionHandler()
     }
 }
+
+/// Each tab's terminal (the pty of its zmx session's process), for agent.hook's origin check. Read from `zmx list`,
+/// kept until a hook names a terminal that differs, and then read again at most every five seconds per tab.
+final class TabTerminals: @unchecked Sendable {
+    private let sessions: ZmxSessions
+    private let lock = NSLock()
+    private var known: [String: (tty: String?, at: Date)] = [:]
+
+    init(sessions: ZmxSessions) { self.sessions = sessions }
+
+    func accepts(tab: String, tty: String) -> Bool {
+        lock.lock()
+        let cached = known[tab]
+        lock.unlock()
+        if let cached, cached.tty == tty || Date().timeIntervalSince(cached.at) < 5 {
+            return HookOrigin.accepts(hookTTY: tty, tabTTY: cached.tty)
+        }
+        guard let id = UUID(uuidString: tab) else { return true }
+        let pid = sessions.pids()[sessions.name(for: id)]
+        let now = pid.flatMap(HookOrigin.ttyName(of:))
+        lock.lock()
+        known[tab] = (now, Date())
+        lock.unlock()
+        return HookOrigin.accepts(hookTTY: tty, tabTTY: now)
+    }
+}
+

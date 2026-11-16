@@ -394,4 +394,17 @@ final class ServerIntegrationTests: XCTestCase {
         print("meum-hook latency incl. process spawn from the test: live server \(Int(live * 1000)) ms, socket missing \(Int(missing * 1000)) ms, bare `sh -c exit` \(Int(baseline * 1000)) ms")
         XCTAssertLessThan(live, 0.5)
     }
+
+    /// A session elsewhere (a background session's daemon started from a tab passes MEUM_TAB on) runs the hook with a
+    /// tab's copied environment from another terminal: meum records nothing and the session learns nothing.
+    func testHookWithACopiedTabEnvFromAnotherTerminalRecordsNothing() throws {
+        h.agents.originCheck = { _, tty in tty == "ttys999" }   // the tab's terminal; this test runs on another
+        let sid = "910c9ccf-0000-4000-8000-0000000000f0"
+        let r = fire(#"{"session_id":"\#(sid)","cwd":"/tmp/x","hook_event_name":"SessionStart","source":"startup"}"#,
+                     env: hookEnv(config: "/Users/dev/.claude-work"))
+        XCTAssertEqual(r.status, 0)
+        XCTAssertEqual(r.stdout, "")
+        XCTAssertEqual(r.stderr, "")
+        XCTAssertNil(h.agents.state(of: FakeHandler.tab1))
+    }
 }

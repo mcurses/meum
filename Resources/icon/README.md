@@ -1,11 +1,10 @@
 # meum icon
 
-Two open upright planes as ivory marks on a saturated paper ground (icon set v2, 2026-11-07).
+Two open upright planes as marks on a paper ground.
 
-- `meum-1024-opaque.png`: the artwork, square and full-bleed (no rounded plate: macOS applies its own mask). The
-  source for `meum.icns`.
-- `meum-1024.png`, `meum-mark.svg`: the mark alone as a silhouette on a transparent canvas, for docs and web.
-- `meum.icns`: the macOS app icon, the artwork at 16–1024 px via `iconutil`.
-
-Regenerate `meum.icns`: write a `.iconset` with the ten sizes (`sips -z`) from `meum-1024-opaque.png`, then
-`iconutil -c icns`.
+- `meum.icon`: the macOS app icon (icon set v3, 2026-11-12), an Icon Composer bundle with the light, dark, clear and
+  tinted appearances. `scripts/build-app.sh` compiles it with `xcrun actool` into `Assets.car` (macOS 26 draws the
+  four appearances from it; 11–15 use its flattened light icon) and a `meum.icns` fallback at 16–1024 px. Needs the
+  Xcode 26 toolchain.
+- `meum-1024-opaque.png`, `meum-1024.png`, `meum-mark.svg`: the earlier artwork (icon set v2) and the mark alone on a
+  transparent canvas, for docs and web.

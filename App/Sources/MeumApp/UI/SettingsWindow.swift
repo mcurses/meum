@@ -69,6 +69,8 @@ struct SettingsView: View {
     @State private var hooksInstalling = false
     @State private var hooksMessage: String?
     @State private var error: String?
+    /// The suffix field's text while it is edited; stored on Return.
+    @State private var openSuffixes = ""
 
     private var s: MSettings { model.value }
 
@@ -120,6 +122,25 @@ struct SettingsView: View {
                         }
                     }
                 }
+            }
+            Section("Folders that links may open") {
+                ForEach(s.boardOpenFolders, id: \.self) { folder in
+                    HStack {
+                        Text(folder).lineLimit(1).truncationMode(.middle)
+                        Spacer()
+                        Button("Remove") {
+                            set("boardOpenFolders", .array(s.boardOpenFolders.filter { $0 != folder }.map { .string($0) }))
+                        }
+                    }
+                }
+                HStack {
+                    Button("Add folder…") { addOpenFolder() }
+                    Spacer()
+                }
+                TextField("Suffixes", text: $openSuffixes)
+                    .onSubmit { commitOpenSuffixes() }
+                Text("A meum://open?path=… link from any app opens a file in its default app only if it lies in one of these folders and has one of these suffixes. Anything else is refused.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             WidgetsSection(model: model, widgets: widgets, updates: updates, set: set).id("widgets")
             Section("Background") {
@@ -176,6 +197,13 @@ struct SettingsView: View {
                     Divider()
                     ForEach(themes, id: \.self) { Text($0).tag($0) }
                 }
+                Picker("Open files in", selection: Binding(get: { s.linkEditor ?? "" },
+                                                           set: { set("linkEditor", $0.isEmpty ? .null : .string($0)) })) {
+                    Text("Each file's default app").tag("")
+                    Divider()
+                    ForEach(Self.editors(including: s.linkEditor), id: \.id) { Text($0.name).tag($0.id) }
+                }
+                .help("Where ⌘-click on a text file or a path with a line number opens it")
                 LabeledContent("Extra Ghostty config") {
                     HStack {
                         TextField("", text: $configPath, prompt: Text("none"))
@@ -263,6 +291,7 @@ struct SettingsView: View {
         .frame(minWidth: 480, minHeight: 400)
         .onAppear {
             configPath = s.ghosttyConfigPath ?? ""
+            openSuffixes = s.boardOpenSuffixes.joined(separator: ", ")
             loadHooks()
         }
     }
@@ -290,6 +319,23 @@ struct SettingsView: View {
 
     private func bool(_ key: String, get: @escaping (MSettings) -> Bool, json: @escaping (Bool) -> JSON) -> Binding<Bool> {
         Binding(get: { get(model.value) }, set: { set(key, json($0)) })
+    }
+
+    private func addOpenFolder() {
+        let p = NSOpenPanel()
+        p.canChooseDirectories = true
+        p.canChooseFiles = false
+        p.allowsMultipleSelection = false
+        p.message = "Choose a folder that meum://open links may open files from"
+        if p.runModal() == .OK, let url = p.url {
+            set("boardOpenFolders", .array((s.boardOpenFolders + [url.path]).map { .string($0) }))
+        }
+    }
+
+    private func commitOpenSuffixes() {
+        let list = LinkOpen.normalizedSuffixes(openSuffixes)
+        set("boardOpenSuffixes", .array(list.map { .string($0) }))
+        openSuffixes = list.joined(separator: ", ")
     }
 
     private func chooseConfig() {
@@ -360,6 +406,20 @@ struct SettingsView: View {
             return f.isFixedPitch && !fam.hasPrefix(".")
         }.sorted()
     }()
+
+    /// Editors a ⌘-clicked file can open in: the installed ones of a known list, plus the current choice.
+    static func editors(including current: String?) -> [(id: String, name: String)] {
+        let known = ["com.microsoft.VSCode", "com.microsoft.VSCodeInsiders", "com.todesktop.230313mzl4w4u92",
+                     "com.exafunction.windsurf", "com.vscodium", "dev.zed.Zed", "com.apple.dt.Xcode",
+                     "com.barebones.bbedit", "com.sublimetext.4", "com.panic.Nova", "com.jetbrains.intellij",
+                     "com.jetbrains.WebStorm", "com.jetbrains.pycharm", "com.apple.TextEdit"]
+        var ids = known
+        if let current, !ids.contains(current) { ids.append(current) }
+        return ids.compactMap { id in
+            guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) else { return nil }
+            return (id, FileManager.default.displayName(atPath: url.path).replacingOccurrences(of: ".app", with: ""))
+        }
+    }
 
     static func monospacedFamilies(including current: String?) -> [String] {
         guard let current, !current.isEmpty, !families.contains(current) else { return families }

@@ -1,4 +1,4 @@
-// The first-launch setup (docs/design/first-launch.md): what meum offers to wire for Claude Code, and the wiring.
+// The first-launch setup (docs/design/architecture.md, "First launch and offers"): what meum offers to wire for Claude Code, and the wiring.
 //
 // Three steps, each offered only when it has something to do:
 //   hooks   meum's hook entries in every Claude config folder (the status dots), the same code as `meum hooks install`
@@ -35,6 +35,11 @@ public struct ClaudeSetup {
         public var step: Step
         public var lines: [String]
         public var ok: Bool
+        public init(step: Step, lines: [String], ok: Bool) {
+            self.step = step
+            self.lines = lines
+            self.ok = ok
+        }
     }
 
     public var home: String
@@ -50,7 +55,20 @@ public struct ClaudeSetup {
 
     // MARK: what to offer
 
-    public func offers(shell: Shell) -> [Offer] {
+    /// Whether the CLI may be registered where it outlives this launch (the MCP entry, the link): only from a meum in
+    /// /Applications or ~/Applications, the rule `HookInstaller.mayRefreshScript` follows. From a mounted disk image
+    /// or a build folder the path would be gone after the eject or the next build.
+    public static func isInstalledCLI(_ cli: String, home: String) -> Bool {
+        let url = URL(fileURLWithPath: cli).standardizedFileURL.resolvingSymlinksInPath()
+        let bundle = url.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent()
+        guard bundle.pathExtension == "app", url.path.hasSuffix(".app/Contents/Resources/bin/meum") else { return false }
+        let parent = bundle.deletingLastPathComponent().path
+        return parent == "/Applications" || parent == (home as NSString).appendingPathComponent("Applications")
+    }
+
+    /// `installedCLI`: false leaves out the MCP and link rows (see `isInstalledCLI`).
+    public func offers(shell: Shell, installedCLI: Bool = true) -> [Offer] {
         var out: [Offer] = []
         let hookDirs = needHooks()
         if !hookDirs.isEmpty {
@@ -58,11 +76,11 @@ public struct ClaudeSetup {
                              detail: "Adds meum's hooks to \(Self.list(hookDirs.map { tilde($0) + "/settings.json" })) (a backup is kept) and puts meum-hook in ~/.local/bin."))
         }
         let mcpDirs = needMCP()
-        if shell.claude != nil, !mcpDirs.isEmpty {
+        if installedCLI, shell.claude != nil, !mcpDirs.isEmpty {
             out.append(Offer(step: .mcp, configDirs: mcpDirs,
                              detail: "Runs `claude mcp add --scope user meum -- \(tilde(cli)) mcp` for \(Self.list(mcpDirs.map(tilde)))."))
         }
-        if needsCLILink(shell: shell) {
+        if installedCLI, needsCLILink(shell: shell) {
             out.append(Offer(step: .cli, configDirs: [],
                              detail: "Links ~/.local/bin/meum to this app's `meum`, so every shell finds it, not only meum's tabs."))
         }
@@ -170,7 +188,8 @@ public struct ClaudeSetup {
         guard let line = text.components(separatedBy: "\n").last(where: { $0.hasPrefix(mark) }) else {
             return Shell(claude: nil, path: [])
         }
-        let path = line.dropFirst(mark.count).split(separator: ":").map(String.init)
+        // only absolute entries: a relative one would find claude against meum's own working directory
+        let path = line.dropFirst(mark.count).split(separator: ":").map(String.init).filter { $0.hasPrefix("/") }
         let claude = path.lazy.map { $0 + "/claude" }.first(where: isExecutable)
         return Shell(claude: claude, path: path)
     }

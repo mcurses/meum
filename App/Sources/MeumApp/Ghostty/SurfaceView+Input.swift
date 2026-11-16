@@ -114,6 +114,16 @@ extension SurfaceView {
         var ke = buildKeyEvent(from: event, action: isFlagPress(event) ? GHOSTTY_ACTION_PRESS : GHOSTTY_ACTION_RELEASE)
         ke.text = nil
         _ = ghostty_surface_key(surface, ke)
+        refreshLinkHover(flags: event.modifierFlags)
+    }
+
+    /// ⌘ pressed or released while the mouse is over this terminal but the keyboard is in another: ghostty
+    /// hears of modifiers only from the focused surface's keys, so pass them with the mouse position, and the
+    /// link under the mouse is underlined here too.
+    func modifiersChangedElsewhere(_ event: NSEvent) {
+        guard let surface, pointerInside, let p = lastReportedMousePoint, p.x >= 0 else { return }
+        ghostty_surface_mouse_pos(surface, p.x, p.y, mods(event))
+        refreshLinkHover(flags: event.modifierFlags)
     }
 
     // MARK: - Mouse
@@ -144,6 +154,7 @@ extension SurfaceView {
 
     override func mouseDown(with event: NSEvent) {
         guard let surface else { return }
+        if handleLinkClick(event) { swallowMouseUp = true; return }
         window?.makeFirstResponder(self)
         updateGhosttyFocus()
         reportMousePos(from: event)
@@ -152,12 +163,14 @@ extension SurfaceView {
 
     override func mouseUp(with event: NSEvent) {
         guard let surface else { return }
+        if swallowMouseUp { swallowMouseUp = false; return }
         reportMousePos(from: event)
         _ = ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_RELEASE, GHOSTTY_MOUSE_LEFT, mods(event))
     }
 
     override func rightMouseDown(with event: NSEvent) {
         guard let surface else { return }
+        if showLinkMenu(event) { return }
         reportMousePos(from: event)
         _ = ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_PRESS, GHOSTTY_MOUSE_RIGHT, mods(event))
     }
@@ -186,6 +199,9 @@ extension SurfaceView {
 
     override func mouseMoved(with event: NSEvent) {
         reportMousePos(from: event)
+        if Self.linkMods(event.modifierFlags) != nil || linkHover?.isHidden == false {
+            refreshLinkHover(flags: event.modifierFlags)
+        }
         if pointerInside { Self.nsCursor(for: mouseShape).set() }
     }
 
@@ -197,6 +213,7 @@ extension SurfaceView {
     override func mouseExited(with event: NSEvent) {
         guard let surface, NSEvent.pressedMouseButtons == 0 else { return }
         pointerInside = false
+        hideLinkHover()
         ghostty_surface_mouse_pos(surface, -1, -1, mods(event))
         lastReportedMousePoint = NSPoint(x: -1, y: -1)
     }
@@ -211,6 +228,7 @@ extension SurfaceView {
         var scrollMods: ghostty_input_scroll_mods_t = 0
         if event.hasPreciseScrollingDeltas { scrollMods |= 1 }
         ghostty_surface_mouse_scroll(surface, event.scrollingDeltaX, event.scrollingDeltaY, scrollMods)
+        if linkHover?.isHidden == false { refreshLinkHover() }
     }
 
     override func cursorUpdate(with event: NSEvent) {
